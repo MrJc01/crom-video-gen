@@ -164,42 +164,65 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 		return fmt.Errorf("provedor de TTS global '%s' não suportado (apenas 'mock' e 'edge-tts' são permitidos)", ttsProvider)
 	}
 
-	// Estrutura para guardar a duração real de cada cena após TTS seqüencial
+	// Estrutura para guardar a duração real de cada cena após TTS concorrente
 	sceneDurations := make([]float64, len(config.Projeto.Cenas))
 	sceneAudioFiles := make([]string, len(config.Projeto.Cenas))
 
-	logger.Info("Iniciando geração sequencial de áudios TTS...")
+	logger.Info("Iniciando geração concorrente de áudios TTS...")
+	
+	var ttsWg sync.WaitGroup
+	ttsErrChan := make(chan error, len(config.Projeto.Cenas))
+
 	for i, cena := range config.Projeto.Cenas {
-		prov := cena.Narracao.Provedor
-		if prov == "" {
-			prov = ttsProvider
-		}
+		ttsWg.Add(1)
+		go func(idx int, c types.Cena) {
+			defer ttsWg.Done()
+			
+			prov := c.Narracao.Provedor
+			if prov == "" {
+				prov = ttsProvider
+			}
 
-		var narrator tts.Narrator
-		switch strings.ToLower(prov) {
-		case "edge-tts":
-			narrator = edgeTTSNarrator
-		case "mock", "":
-			narrator = mockNarrator
-		default:
-			return fmt.Errorf("provedor de TTS '%s' não suportado na cena %d", prov, cena.ID)
-		}
+			var narrator tts.Narrator
+			switch strings.ToLower(prov) {
+			case "edge-tts":
+				narrator = edgeTTSNarrator
+			case "mock", "":
+				narrator = mockNarrator
+			default:
+				ttsErrChan <- fmt.Errorf("provedor de TTS '%s' não suportado na cena %d", prov, c.ID)
+				return
+			}
 
-		audioOut := filepath.Join(tempDir, fmt.Sprintf("cena_%d_narration.mp3", cena.ID))
-		_, err := narrator.Narrate(cena.Narracao.Texto, cena.Narracao.Voz, cena.Narracao.Rate, cena.Narracao.Pitch, cena.Narracao.Volume, audioOut)
-		if err != nil {
-			return fmt.Errorf("falha ao gerar áudio de narração para cena %d: %w", cena.ID, err)
-		}
+			audioOut := filepath.Join(tempDir, fmt.Sprintf("cena_%d_narration.mp3", c.ID))
+			_, err := narrator.Narrate(c.Narracao.Texto, c.Narracao.Voz, c.Narracao.Rate, c.Narracao.Pitch, c.Narracao.Volume, audioOut)
+			if err != nil {
+				ttsErrChan <- fmt.Errorf("falha ao gerar áudio de narração para cena %d: %w", c.ID, err)
+				return
+			}
 
-		probedDuration, err := tts.GetAudioDuration(audioOut)
-		if err != nil {
-			return fmt.Errorf("falha ao inspecionar áudio gerado na cena %d: %w", cena.ID, err)
-		}
+			probedDuration, err := tts.GetAudioDuration(audioOut)
+			if err != nil {
+				ttsErrChan <- fmt.Errorf("falha ao inspecionar áudio gerado na cena %d: %w", c.ID, err)
+				return
+			}
 
-		sceneDurations[i] = probedDuration
-		sceneAudioFiles[i] = audioOut
-		logger.Debug("Áudio de narração gerado (sequencial)", "cena_id", cena.ID, "duracao", probedDuration)
+			sceneDurations[idx] = probedDuration
+			sceneAudioFiles[idx] = audioOut
+			logger.Debug("Áudio de narração gerado (concorrente)", "cena_id", c.ID, "duracao", probedDuration)
+		}(i, cena)
 	}
+
+	ttsWg.Wait()
+	close(ttsErrChan)
+
+	// Verifica se ocorreu algum erro durante a geração paralela de TTS
+	for err := range ttsErrChan {
+		if err != nil {
+			return err
+		}
+	}
+
 	logger.Info("Todos os áudios TTS foram gerados com sucesso")
 
 	// Limita concorrência de renderização

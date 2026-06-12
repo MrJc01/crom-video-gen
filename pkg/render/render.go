@@ -231,8 +231,9 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		)
 	}
 
-	// Configuração de codificação de vídeo
-	args = append(args, "-c:v", "libx264")
+	// Configuração de codificação de vídeo final
+	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18")
+	
 	if w != 1920 || h != 1080 {
 		args = append(args, "-vf", fmt.Sprintf("scale=%d:%d", w, h))
 	}
@@ -242,7 +243,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		outputPath,
 	)
 
-	logger.Debug("Executando FFmpeg para cena (mjpeg pipe)", "cena_id", cena.ID, "comando", ffmpegPath+" "+strings.Join(args, " "))
+	logger.Debug("Executando FFmpeg para cena", "comando", ffmpegPath+" "+strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	stdin, err := cmd.StdinPipe()
@@ -256,7 +257,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		return fmt.Errorf("falha ao iniciar FFmpeg: %w (stderr: %s)", err, stderr.String())
 	}
 
-	// Loop frame-a-frame de captura
+	// Loop frame-a-frame de captura otimizado
 	totalFrames := int(duration * float64(global.FPS))
 	if totalFrames < 1 {
 		totalFrames = 1
@@ -265,20 +266,25 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 	for f := 0; f < totalFrames; f++ {
 		timeSeconds := float64(f) / float64(global.FPS)
 
-		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek
+		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek (agora usando Promise)
 		seekScript := fmt.Sprintf(`
-			(function() {
-				window.seekFinished = false;
+			new Promise((resolve) => {
 				const videos = Array.from(document.querySelectorAll('video'));
 				let pending = 0;
+				let resolved = false;
 				
+				const checkResolve = () => {
+					if (pending === 0 && !resolved) {
+						resolved = true;
+						resolve();
+					}
+				};
+
 				videos.forEach(v => {
 					pending++;
 					const onSeeked = () => {
 						pending--;
-						if (pending === 0) {
-							window.seekFinished = true;
-						}
+						checkResolve();
 					};
 					v.addEventListener('seeked', onSeeked, { once: true });
 					// Timeout backup caso não dispare
@@ -286,40 +292,21 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 						if (v.seeking === false) {
 							v.removeEventListener('seeked', onSeeked);
 							pending--;
-							if (pending === 0) {
-								window.seekFinished = true;
-							}
+							checkResolve();
 						}
 					}, 250);
 				});
 
 				window.seekTo(%f, %f);
-
-				if (videos.length === 0) {
-					window.seekFinished = true;
-				}
-			})();
+				checkResolve(); // Para o caso de não haver vídeos
+			});
 		`, timeSeconds, duration)
 
-		// Executa o script de seek
+		// Executa o script de seek usando Evaluate, que por padrão aguarda a Promise finalizar
 		err = chromedp.Run(sceneCtx, chromedp.Evaluate(seekScript, nil))
 		if err != nil {
 			_ = stdin.Close()
 			return fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
-		}
-
-		// Polling curto para esperar o seek dos vídeos terminar
-		var finished bool
-		for i := 0; i < 100; i++ {
-			err = chromedp.Run(sceneCtx, chromedp.Evaluate("window.seekFinished", &finished))
-			if err != nil {
-				_ = stdin.Close()
-				return fmt.Errorf("falha ao checar status de seek no frame %d: %w", f, err)
-			}
-			if finished {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
 		}
 
 		// Captura o frame como screenshot JPEG
@@ -338,8 +325,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		}
 
 		// Escreve os bytes da imagem no stdin do FFmpeg
-		_, err = stdin.Write(imageBuf)
-		if err != nil {
+		if _, err := stdin.Write(imageBuf); err != nil {
 			_ = stdin.Close()
 			return fmt.Errorf("falha ao escrever frame %d no pipe do FFmpeg: %w (stderr: %s)", f, err, stderr.String())
 		}
@@ -396,27 +382,50 @@ func ConcatScenes(ctx context.Context, logger *slog.Logger, sceneFiles []string,
 	}
 
 	// Segundo passo: Muxa a trilha sonora em loop com os áudios de narração do vídeo concatenado
-	audioFilter := fmt.Sprintf("[1:a]volume=%.3f[music]; [0:a][music]amix=inputs=2:duration=first:dropout_transition=2", globalTrackVolume)
-	if audioConf.NormalizarVolume {
-		audioFilter += ",loudnorm[audio_final]"
-	} else {
-		audioFilter += "[audio_final]"
-	}
+	var muxArgs []string
+	if soundtrackPath != "" {
+		audioFilter := fmt.Sprintf("[1:a]volume=%.3f[music]; [0:a][music]amix=inputs=2:duration=first:dropout_transition=2", globalTrackVolume)
+		if audioConf.NormalizarVolume {
+			audioFilter += ",loudnorm[audio_final]"
+		} else {
+			audioFilter += "[audio_final]"
+		}
 
-	muxArgs := []string{
-		"-y",
-		"-i", tempConcatOutput,
-		"-stream_loop", "-1", // loop infinito na música de fundo
-		"-i", soundtrackPath,
-		"-filter_complex", audioFilter,
-		"-map", "0:v",
-		"-map", "[audio_final]",
-		"-c:v", "copy", // copia o fluxo de vídeo sem re-encodificar (super rápido)
-		"-c:a", audioConf.Codec,
-		"-ar", fmt.Sprintf("%d", audioConf.SampleRate),
-		"-ac", fmt.Sprintf("%d", audioConf.Canais),
-		"-b:a", audioConf.Bitrate,
-		outputPath,
+		muxArgs = []string{
+			"-y",
+			"-i", tempConcatOutput,
+			"-stream_loop", "-1", // loop infinito na música de fundo
+			"-i", soundtrackPath,
+			"-filter_complex", audioFilter,
+			"-map", "0:v",
+			"-map", "[audio_final]",
+			"-c:v", "copy", // copia o fluxo de vídeo sem re-encodificar (super rápido)
+			"-c:a", audioConf.Codec,
+			"-ar", fmt.Sprintf("%d", audioConf.SampleRate),
+			"-ac", fmt.Sprintf("%d", audioConf.Canais),
+			"-b:a", audioConf.Bitrate,
+			outputPath,
+		}
+	} else {
+		muxArgs = []string{
+			"-y",
+			"-i", tempConcatOutput,
+			"-map", "0:v",
+			"-map", "0:a",
+			"-c:v", "copy",
+		}
+		if audioConf.NormalizarVolume {
+			muxArgs = append(muxArgs, "-af", "loudnorm")
+			muxArgs = append(muxArgs,
+				"-c:a", audioConf.Codec,
+				"-ar", fmt.Sprintf("%d", audioConf.SampleRate),
+				"-ac", fmt.Sprintf("%d", audioConf.Canais),
+				"-b:a", audioConf.Bitrate,
+			)
+		} else {
+			muxArgs = append(muxArgs, "-c:a", "copy")
+		}
+		muxArgs = append(muxArgs, outputPath)
 	}
 
 	logger.Debug("Adicionando trilha sonora", "comando", ffmpegPath+" "+strings.Join(muxArgs, " "))
