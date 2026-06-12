@@ -2,10 +2,12 @@ package tts
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"crom-video-gen/internal/execs"
 )
@@ -101,13 +103,26 @@ func (en *EdgeTTSNarrator) Narrate(texto string, voz string, rate string, pitch 
 	}
 	args = append(args, "--write-media", outputPath)
 
-	cmd := exec.Command(edgeTTSPath, args...)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("falha ao gerar áudio com edge-tts (%s): %w (detalhes: %s)", edgeTTSPath, err, stderr.String())
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		cmd := exec.CommandContext(ctx, edgeTTSPath, args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		cancel()
+		if err == nil {
+			break
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			err = fmt.Errorf("timeout ao gerar áudio com edge-tts (25s excedido)")
+		} else {
+			err = fmt.Errorf("erro: %w (stderr: %s)", err, stderr.String())
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("falha ao gerar áudio com edge-tts (%s) após 3 tentativas: %w", edgeTTSPath, err)
 	}
 
 	// Extrai a duração real do áudio gerado

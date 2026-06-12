@@ -3,13 +3,18 @@ package render
 import (
 	"context"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"crom-video-gen/internal/execs"
 	"crom-video-gen/pkg/types"
+
+	"github.com/chromedp/chromedp"
 )
 
 func generateTestImage(t *testing.T, ffmpegPath, outputPath string) {
@@ -87,8 +92,44 @@ func TestRenderScene_IntroBranding(t *testing.T) {
 	// Criamos um logger básico descartável para o teste
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
+	projectRoot := execs.FindProjectRoot()
+
+	// Inicia local HTTP server
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	localAddr := listener.Addr().String()
+
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.Dir(projectRoot)))
+	httpServer := &http.Server{Handler: mux}
+
+	go func() {
+		_ = httpServer.Serve(listener)
+	}()
+	defer func() {
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelShutdown()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+
+	// Inicia chromedp allocator e context
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
+		chromedp.NoSandbox,
+	)
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer allocCancel()
+
+	chromeCtx, chromeCancel := chromedp.NewContext(allocCtx)
+	defer chromeCancel()
+
+	// Pre-boot browser
+	_ = chromedp.Run(chromeCtx, chromedp.Navigate("about:blank"))
+
 	// Renderiza a cena
-	err = RenderScene(context.Background(), logger, cena, globalConf, testAudio, 3.0, outputScene)
+	err = RenderScene(context.Background(), logger, chromeCtx, localAddr, projectRoot, cena, globalConf, testAudio, 3.0, outputScene)
 	if err != nil {
 		t.Fatalf("Erro ao renderizar cena: %v", err)
 	}

@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,43 +56,14 @@ func WrapText(text string, maxLen int) string {
 }
 
 // RenderScene gera um arquivo MP4 intermediário para uma única cena usando headless Chrome e FFmpeg pipe
-func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, global *types.GlobalConfig, audioPath string, duration float64, outputPath string) error {
+func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Context, localAddr string, projectRoot string, cena *types.Cena, global *types.GlobalConfig, audioPath string, duration float64, outputPath string) error {
 	ffmpegPath := execs.ResolveFFmpegPath()
 	w, h, err := global.GetResolutionWidthAndHeight()
 	if err != nil {
 		return fmt.Errorf("resolução inválida: %w", err)
 	}
 
-	// 1. Encontra o diretório raiz do projeto
-	projectRoot := execs.FindProjectRoot()
-
-	// 2. Inicia o servidor HTTP local para servir templates e assets sem problemas de CORS
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("falha ao iniciar listener HTTP local: %w", err)
-	}
-	localAddr := listener.Addr().String()
-
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir(projectRoot)))
-
-	httpServer := &http.Server{
-		Handler: mux,
-	}
-
-	go func() {
-		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			logger.Error("Erro no servidor HTTP local", "erro", err)
-		}
-	}()
-	defer func() {
-		// Shutdown com timeout curto para limpar recursos rapidamente
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
-	// 3. Ajusta o caminho dos ativos na struct da cena para rotas relativas do servidor web
+	// Ajusta o caminho dos ativos na struct da cena para rotas relativas do servidor web
 	browserCena := *cena
 	browserCena.Ativos = make(map[string]types.Ativo)
 	for key, ativo := range cena.Ativos {
@@ -117,34 +86,22 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 		}
 	}
 
-	// 4. Converte a struct da cena para JSON e codifica em Base64
+	// Converte a struct da cena para JSON e codifica em Base64
 	cenaBytes, err := json.Marshal(browserCena)
 	if err != nil {
 		return fmt.Errorf("falha ao codificar cena para JSON: %w", err)
 	}
 	cenaBase64 := base64.StdEncoding.EncodeToString(cenaBytes)
 
-	// 5. Prepara as opções de execução do chromedp
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.DisableGPU,
-		chromedp.NoSandbox, // Compatibilidade com Linux e ambientes dockerizados
-		chromedp.Flag("hide-scrollbars", true),
-		chromedp.WindowSize(1920, 1080),
-	)
+	// Inicializa o contexto do browser filho (nova aba no Chrome existente)
+	sceneCtx, sceneCancel := chromedp.NewContext(chromeCtx)
+	defer sceneCancel()
 
-	// Inicializa o chromedp allocator
-	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
-	defer allocCancel()
-
-	// Inicializa o contexto do browser
-	chromeCtx, chromeCancel := chromedp.NewContext(allocCtx)
-	defer chromeCancel()
-
-	// 6. Navega para o template correspondente
+	// Navega para o template correspondente
 	templateURL := fmt.Sprintf("http://%s/templates/%s/index.html", localAddr, cena.Template.ID)
 	logger.Debug("Navegando para o template da cena", "url", templateURL)
 
-	err = chromedp.Run(chromeCtx,
+	err = chromedp.Run(sceneCtx,
 		chromedp.Navigate(templateURL),
 		chromedp.EmulateViewport(1920, 1080),
 	)
@@ -165,7 +122,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 			window.setupTemplate(jsonStr);
 		})()
 	`, cenaBase64)
-	err = chromedp.Run(chromeCtx, chromedp.Evaluate(setupScript, nil))
+	err = chromedp.Run(sceneCtx, chromedp.Evaluate(setupScript, nil))
 	if err != nil {
 		return fmt.Errorf("falha ao configurar o template via JS: %w", err)
 	}
@@ -229,7 +186,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 			checkReady();
 		})();
 	`
-	err = chromedp.Run(chromeCtx, chromedp.Evaluate(waitAssetsScript, nil))
+	err = chromedp.Run(sceneCtx, chromedp.Evaluate(waitAssetsScript, nil))
 	if err != nil {
 		return fmt.Errorf("falha ao injetar script de espera de ativos: %w", err)
 	}
@@ -237,7 +194,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 	// Polling para esperar até 2 segundos pelo carregamento dos ativos
 	var setupFinished bool
 	for i := 0; i < 200; i++ { // 200 * 10ms = 2s
-		err = chromedp.Run(chromeCtx, chromedp.Evaluate("window.setupFinished", &setupFinished))
+		err = chromedp.Run(sceneCtx, chromedp.Evaluate("window.setupFinished", &setupFinished))
 		if err != nil {
 			return fmt.Errorf("falha ao checar status de carregamento: %w", err)
 		}
@@ -248,7 +205,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 	}
 	logger.Debug("Status de inicialização dos ativos da cena", "cena_id", cena.ID, "carregado", setupFinished)
 
-	// 7. Configura a pipeline do FFmpeg para receber frames via stdin (image2pipe)
+	// Configura a pipeline do FFmpeg para receber frames via stdin (image2pipe)
 	args := []string{
 		"-y",
 		"-f", "image2pipe",
@@ -299,7 +256,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 		return fmt.Errorf("falha ao iniciar FFmpeg: %w (stderr: %s)", err, stderr.String())
 	}
 
-	// 8. Loop frame-a-frame de captura
+	// Loop frame-a-frame de captura
 	totalFrames := int(duration * float64(global.FPS))
 	if totalFrames < 1 {
 		totalFrames = 1
@@ -345,7 +302,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 		`, timeSeconds, duration)
 
 		// Executa o script de seek
-		err = chromedp.Run(chromeCtx, chromedp.Evaluate(seekScript, nil))
+		err = chromedp.Run(sceneCtx, chromedp.Evaluate(seekScript, nil))
 		if err != nil {
 			_ = stdin.Close()
 			return fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
@@ -354,7 +311,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 		// Polling curto para esperar o seek dos vídeos terminar
 		var finished bool
 		for i := 0; i < 100; i++ {
-			err = chromedp.Run(chromeCtx, chromedp.Evaluate("window.seekFinished", &finished))
+			err = chromedp.Run(sceneCtx, chromedp.Evaluate("window.seekFinished", &finished))
 			if err != nil {
 				_ = stdin.Close()
 				return fmt.Errorf("falha ao checar status de seek no frame %d: %w", f, err)
@@ -367,7 +324,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, cena *types.Cena, glo
 
 		// Captura o frame como screenshot JPEG
 		var imageBuf []byte
-		err = chromedp.Run(chromeCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		err = chromedp.Run(sceneCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 			var captureErr error
 			imageBuf, captureErr = page.CaptureScreenshot().
 				WithFormat(page.CaptureScreenshotFormatJpeg).

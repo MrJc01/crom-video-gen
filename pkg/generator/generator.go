@@ -4,14 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"crom-video-gen/internal/assets"
 	"crom-video-gen/internal/execs"
 	"crom-video-gen/pkg/render"
 	"crom-video-gen/pkg/tts"
 	"crom-video-gen/pkg/types"
+
+	"github.com/chromedp/chromedp"
 )
 
 // GenerateVideo é o orquestrador principal que executa a validação e renderização completa do vídeo
@@ -85,7 +92,69 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	}()
 	logger.Debug("Diretório temporário criado para renderização", "dir", tempDir)
 
-	// 4. Inicializa os motores de TTS
+	// 4. Inicializa o servidor HTTP local compartilhado para servir templates/ativos
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("falha ao iniciar listener HTTP local compartilhado: %w", err)
+	}
+	localAddr := listener.Addr().String()
+
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.Dir(root)))
+
+	httpServer := &http.Server{
+		Handler: mux,
+	}
+
+	go func() {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logger.Error("Erro no servidor HTTP local compartilhado", "erro", err)
+		}
+	}()
+	defer func() {
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelShutdown()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+	logger.Debug("Servidor HTTP local compartilhado ativo", "addr", localAddr)
+
+	// 5. Inicializa uma única instância do Chrome compartilhada
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
+		chromedp.NoSandbox, // Compatibilidade com Linux e ambientes dockerizados
+		chromedp.Flag("hide-scrollbars", true),
+		chromedp.WindowSize(1920, 1080),
+		// Performance/Headless flags:
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-background-timer-throttling", true),
+		chromedp.Flag("disable-backgrounding-occluded-windows", true),
+		chromedp.Flag("disable-breakpad", true),
+		chromedp.Flag("disable-client-side-phishing-detection", true),
+		chromedp.Flag("disable-default-apps", true),
+		chromedp.Flag("disable-hang-monitor", true),
+		chromedp.Flag("disable-popup-blocking", true),
+		chromedp.Flag("disable-prompt-on-repost", true),
+		chromedp.Flag("disable-sync", true),
+		chromedp.Flag("metrics-recording-only", true),
+		chromedp.Flag("safebrowsing-disable-auto-update", true),
+	)
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
+	defer allocCancel()
+
+	chromeCtx, chromeCancel := chromedp.NewContext(allocCtx)
+	defer chromeCancel()
+
+	// Inicializa a instância do navegador executando uma navegação em branco
+	if err := chromedp.Run(chromeCtx, chromedp.Navigate("about:blank")); err != nil {
+		return fmt.Errorf("falha ao iniciar browser compartilhado: %w", err)
+	}
+	logger.Debug("Instância compartilhada do Chrome iniciada com sucesso")
+
+	// 6. Inicializa os motores de TTS
 	mockNarrator := tts.NewMockNarrator()
 	edgeTTSNarrator := tts.NewEdgeTTSNarrator()
 
@@ -95,13 +164,12 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 		return fmt.Errorf("provedor de TTS global '%s' não suportado (apenas 'mock' e 'edge-tts' são permitidos)", ttsProvider)
 	}
 
-	var intermediateSceneFiles []string
+	// Estrutura para guardar a duração real de cada cena após TTS seqüencial
+	sceneDurations := make([]float64, len(config.Projeto.Cenas))
+	sceneAudioFiles := make([]string, len(config.Projeto.Cenas))
 
-	// 5. Renderiza cada cena individualmente
+	logger.Info("Iniciando geração sequencial de áudios TTS...")
 	for i, cena := range config.Projeto.Cenas {
-		logger.Info("Processando cena", "progresso_etapa", fmt.Sprintf("%d/%d", i+1, len(config.Projeto.Cenas)), "cena_id", cena.ID, "template", cena.Template.ID)
-
-		// Escolhe o provedor para a cena (específico da cena se fornecido, senão o global)
 		prov := cena.Narracao.Provedor
 		if prov == "" {
 			prov = ttsProvider
@@ -117,29 +185,75 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 			return fmt.Errorf("provedor de TTS '%s' não suportado na cena %d", prov, cena.ID)
 		}
 
-		// Caminho temporário para salvar o áudio de narração da cena
 		audioOut := filepath.Join(tempDir, fmt.Sprintf("cena_%d_narration.mp3", cena.ID))
-		duration, err := narrator.Narrate(cena.Narracao.Texto, cena.Narracao.Voz, cena.Narracao.Rate, cena.Narracao.Pitch, cena.Narracao.Volume, audioOut)
+		_, err := narrator.Narrate(cena.Narracao.Texto, cena.Narracao.Voz, cena.Narracao.Rate, cena.Narracao.Pitch, cena.Narracao.Volume, audioOut)
 		if err != nil {
 			return fmt.Errorf("falha ao gerar áudio de narração para cena %d: %w", cena.ID, err)
 		}
-		logger.Debug("Áudio de narração gerado", "cena_id", cena.ID, "duracao_segundos", duration)
 
-		// Verifica se o arquivo de áudio foi realmente gerado e extrai a duração com ffprobe
 		probedDuration, err := tts.GetAudioDuration(audioOut)
 		if err != nil {
 			return fmt.Errorf("falha ao inspecionar áudio gerado na cena %d: %w", cena.ID, err)
 		}
 
-		// Caminho temporário para salvar o vídeo individual renderizado da cena
-		videoOut := filepath.Join(tempDir, fmt.Sprintf("cena_%d_rendered.mp4", cena.ID))
-		err = render.RenderScene(ctx, logger, &cena, &config.Projeto.ConfiguracoesGlobais, audioOut, probedDuration, videoOut)
-		if err != nil {
-			return fmt.Errorf("falha ao renderizar cena %d: %w", cena.ID, err)
-		}
+		sceneDurations[i] = probedDuration
+		sceneAudioFiles[i] = audioOut
+		logger.Debug("Áudio de narração gerado (sequencial)", "cena_id", cena.ID, "duracao", probedDuration)
+	}
+	logger.Info("Todos os áudios TTS foram gerados com sucesso")
 
-		intermediateSceneFiles = append(intermediateSceneFiles, videoOut)
-		logger.Info("Cena renderizada com sucesso", "cena_id", cena.ID, "duracao", probedDuration)
+	// Limita concorrência de renderização
+	maxWorkers := runtime.NumCPU() / 2
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	if maxWorkers > 4 {
+		maxWorkers = 4 // limite prudente de RAM/Chrome tabs
+	}
+	logger.Info("Iniciando renderização paralela de cenas", "workers", maxWorkers)
+
+	type Result struct {
+		Index     int
+		VideoPath string
+		Err       error
+	}
+
+	resultsChan := make(chan Result, len(config.Projeto.Cenas))
+	semaphore := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+
+	// 7. Renderiza cada cena concorrentemente
+	for i, cena := range config.Projeto.Cenas {
+		wg.Add(1)
+		go func(idx int, c types.Cena, audioPath string, duration float64) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			logger.Info("Processando cena (concorrente)", "progresso_etapa", fmt.Sprintf("%d/%d", idx+1, len(config.Projeto.Cenas)), "cena_id", c.ID, "template", c.Template.ID)
+
+			// Caminho temporário para salvar o vídeo individual renderizado da cena
+			videoOut := filepath.Join(tempDir, fmt.Sprintf("cena_%d_rendered.mp4", c.ID))
+			err = render.RenderScene(ctx, logger, chromeCtx, localAddr, root, &c, &config.Projeto.ConfiguracoesGlobais, audioPath, duration, videoOut)
+			if err != nil {
+				resultsChan <- Result{Index: idx, Err: fmt.Errorf("falha ao renderizar cena %d: %w", c.ID, err)}
+				return
+			}
+
+			logger.Info("Cena renderizada com sucesso", "cena_id", c.ID, "duracao", duration)
+			resultsChan <- Result{Index: idx, VideoPath: videoOut}
+		}(i, cena, sceneAudioFiles[i], sceneDurations[i])
+	}
+
+	wg.Wait()
+	close(resultsChan)
+
+	intermediateSceneFiles := make([]string, len(config.Projeto.Cenas))
+	for res := range resultsChan {
+		if res.Err != nil {
+			return res.Err
+		}
+		intermediateSceneFiles[res.Index] = res.VideoPath
 	}
 
 	// 6. Concatena os clipes de vídeo das cenas e adiciona a trilha sonora

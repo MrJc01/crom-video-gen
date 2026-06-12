@@ -3,6 +3,11 @@
 
 set -e
 
+# Garante que o script roda a partir da raiz do projeto
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+PROJECT_ROOT="$( dirname "$SCRIPT_DIR" )"
+cd "$PROJECT_ROOT"
+
 FFMPEG="./bin/ffmpeg"
 if [ ! -f "$FFMPEG" ]; then
     FFMPEG="ffmpeg"

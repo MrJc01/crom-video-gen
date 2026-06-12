@@ -3,9 +3,14 @@
 
 set -e
 
+# Garante que o script roda a partir da raiz do projeto
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+PROJECT_ROOT="$( dirname "$SCRIPT_DIR" )"
+cd "$PROJECT_ROOT"
+
 echo "=== 1. Compilando o Binário Go ==="
 go build -o crom-video-gen cmd/crom-video-gen/main.go
-echo "Binário compilo com sucesso!"
+echo "Binário compilado com sucesso!"
 
 echo ""
 echo "=== 2. Testando Modo: Apenas Validação (Sem Renderização) ==="
