@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .kpi-bg {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: black;
+            transform-origin: center center;
+        }
+        .kpi-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            background: radial-gradient(circle at center, rgba(10, 10, 20, 0.35) 0%, rgba(5, 5, 8, 0.8) 100%);
+            z-index: 2;
+        }
+        
+        /* KPI Glass Card */
+        .kpi-card {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            background: linear-gradient(135deg, rgba(20, 20, 35, 0.8) 0%, rgba(10, 10, 15, 0.5) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 28px;
+            padding: 50px 70px;
+            display: flex;
+            align-items: center;
+            gap: 50px;
+            z-index: 5;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            opacity: 0;
+            min-width: 650px;
+        }
+        .kpi-circle-container {
+            position: relative;
+            width: 160px;
+            height: 160px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .kpi-data {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .kpi-value {
+            font-size: 76px;
+            font-weight: 900;
+            color: #ffffff;
+            line-height: 1.0;
+            margin-bottom: 15px;
+            font-family: 'Roboto', sans-serif;
+            letter-spacing: -2px;
+        }
+        .kpi-label {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: rgba(255, 255, 255, 0.45);
+            text-transform: uppercase;
+            max-width: 400px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="kpi-overlay"></div>
+        
+        <div class="kpi-card" id="kpi-card">
+            <div class="kpi-circle-container">
+                <svg width="150" height="150" style="transform: rotate(-90deg);">
+                    <circle cx="75" cy="75" r="54" stroke="rgba(255,255,255,0.06)" stroke-width="8" fill="none"></circle>
+                    <circle cx="75" cy="75" r="54" stroke="#ffaa00" stroke-width="8" fill="none" stroke-dasharray="340" stroke-dashoffset="340" id="kpi-ring" stroke-linecap="round"></circle>
+                </svg>
+                <!-- Central glow badge icon -->
+                <div style="position: absolute; width: 80px; height: 80px; border-radius: 50%; background: rgba(255, 255, 255, 0.02); display: flex; justify-content: center; align-items: center;">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" id="kpi-icon">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#ffaa00" stroke-width="2" stroke-linejoin="round"></path>
+                        <path d="M2 17L12 22L22 17" stroke="#ffaa00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                        <path d="M2 12L12 17L22 12" stroke="#ffaa00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="kpi-data">
+                <div class="kpi-value" id="kpi-value"></div>
+                <div class="kpi-label" id="kpi-label"></div>
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let zoomSpeedMax = 1.12;
+        let targetPercentage = 100.0;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Get parameters
+            const params = cena.template.parametros || {};
+            const accentColor = params.accent_color || "#ffaa00";
+            targetPercentage = params.progress_percentage !== undefined ? params.progress_percentage : 100.0;
+
+            // Set text values
+            document.getElementById('kpi-value').innerText = params.metric_value || "";
+            document.getElementById('kpi-label').innerText = params.metric_label || "";
+
+            // Style with accent color
+            document.getElementById('kpi-ring').style.stroke = accentColor;
+            
+            // Update icons fill/stroke
+            const paths = document.querySelectorAll('#kpi-icon path');
+            paths.forEach(p => p.style.stroke = accentColor);
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'kpi-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'kpi-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            }
+
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Ken Burns zoom effect on background image
+            if (!isVideo && mediaElement) {
+                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * progress;
+                mediaElement.style.transform = `scale(${currentScale}) translate(${12 * progress}px, ${8 * progress}px)`;
+            }
+
+            // Glass card reveals: 0.0 -> 0.35
+            const card = document.getElementById('kpi-card');
+            const cardProg = Math.min(progress / 0.35, 1.0);
+            const cardEase = Math.sin(cardProg * Math.PI / 2);
+            card.style.opacity = cardProg;
+            card.style.transform = `translate(-50%, -50%) scale(${0.88 + 0.12 * cardEase})`;
+
+            // KPI Progress ring fills up: 0.2 -> 0.75
+            const ringProg = Math.max(0, Math.min((progress - 0.2) / 0.55, 1.0));
+            // Linear progression mapped to targetPercentage
+            const currentPercentage = targetPercentage * ringProg;
+            
+            const ring = document.getElementById('kpi-ring');
+            if (ring) {
+                const maxOffset = 340;
+                const offset = maxOffset - (maxOffset * (currentPercentage / 100.0));
+                ring.style.strokeDashoffset = offset;
+            }
+        };
+    </script>
+</body>
+</html>

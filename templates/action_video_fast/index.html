@@ -3,12 +3,73 @@
 <head>
     <meta charset="utf-8">
     <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .main-media {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: black;
+            transition: transform 0.05s linear;
+        }
+        
+        /* Dashboard Speed Badge */
+        .speed-badge {
+            position: absolute;
+            top: 50px;
+            right: 50px;
+            background: rgba(10, 10, 15, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            z-index: 10;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            font-family: 'Roboto', sans-serif;
+        }
+        .speed-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .speed-label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: rgba(255, 255, 255, 0.4);
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+        .speed-value {
+            font-size: 26px;
+            font-weight: 900;
+            color: #ffaa00;
+            line-height: 1.0;
+        }
+    </style>
 </head>
 <body>
     <div id="viewport">
         <div class="media-container" id="container">
             <!-- Media will be dynamically injected here -->
         </div>
+        
+        <!-- Canvas for procedural speed lines -->
+        <canvas id="speed-canvas" width="1920" height="1080" style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; pointer-events: none; z-index: 4;"></canvas>
+        
+        <!-- Speed Dashboard badge -->
+        <div class="speed-badge">
+            <div class="speed-info">
+                <span class="speed-label">TURBO ENGINE</span>
+                <span class="speed-value" id="speed-value">1.5X</span>
+            </div>
+            <svg width="60" height="60" style="margin-left: 18px; transform: rotate(-90deg);">
+                <circle cx="30" cy="30" r="22" stroke="rgba(255,255,255,0.08)" stroke-width="4" fill="none"></circle>
+                <circle cx="30" cy="30" r="22" stroke="#ffaa00" stroke-width="4" fill="none" stroke-dasharray="138" stroke-dashoffset="138" id="speed-ring" stroke-linecap="round" style="transition: stroke-dashoffset 0.1s linear;"></circle>
+            </svg>
+        </div>
+
         <div class="subtitles-container">
             <div id="subtitles" class="subtitles-text"></div>
         </div>
@@ -28,6 +89,9 @@
             // Get speed parameter
             const params = cena.template.parametros || {};
             playbackSpeed = params.playback_speed !== undefined ? params.playback_speed : 1.5;
+
+            // Set badge values
+            document.getElementById('speed-value').innerText = `${playbackSpeed.toFixed(1)}X`;
 
             // Set media
             const container = document.getElementById('container');
@@ -56,6 +120,67 @@
             if (isVideo && mediaElement) {
                 // Seek to scaled time based on speed
                 mediaElement.currentTime = timeInSeconds * playbackSpeed;
+            }
+
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Animate progress ring on speed badge
+            const ring = document.getElementById('speed-ring');
+            if (ring) {
+                const maxOffset = 138;
+                const offset = maxOffset - (maxOffset * progress);
+                ring.style.strokeDashoffset = offset;
+            }
+
+            // High frequency deterministic camera shake (action vibe)
+            let shakeSeed = Math.floor(timeInSeconds * 60); // 60hz vibration
+            function shakeRandom() {
+                let x = Math.sin(shakeSeed++) * 10000;
+                return x - Math.floor(x);
+            }
+
+            let dx = 0;
+            let dy = 0;
+            let scaleOsc = 1.0;
+            if (playbackSpeed > 1.0) {
+                dx = (shakeRandom() - 0.5) * 6; // up to 3px offset
+                dy = (shakeRandom() - 0.5) * 6;
+                scaleOsc = 1.02 + 0.006 * Math.sin(timeInSeconds * 50); // fast scale vibration
+            }
+
+            if (mediaElement) {
+                mediaElement.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleOsc})`;
+            }
+
+            // Procedural deterministic speed lines drawing
+            const canvas = document.getElementById('speed-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, 1920, 1080);
+
+            const numLines = 25;
+            let seed = Math.floor(timeInSeconds * 120); // updates line positions at 120fps
+            function seedRandom() {
+                let x = Math.sin(seed++) * 10000;
+                return x - Math.floor(x);
+            }
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+            ctx.lineWidth = 1.5;
+            for (let i = 0; i < numLines; i++) {
+                const angle = seedRandom() * Math.PI * 2;
+                const length = 120 + seedRandom() * 260;
+                const startDist = 580 + seedRandom() * 220;
+                
+                const startX = 960 + Math.cos(angle) * startDist;
+                const startY = 540 + Math.sin(angle) * startDist;
+                const endX = 960 + Math.cos(angle) * (startDist + length);
+                const endY = 540 + Math.sin(angle) * (startDist + length);
+                
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
             }
         };
     </script>

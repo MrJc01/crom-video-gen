@@ -24,6 +24,9 @@ var (
 		"highlight_focus":    true,
 		"action_video_fast":  true,
 		"outro_credits":      true,
+		"quote_testimonial":  true,
+		"dashboard_kpi":      true,
+		"process_steps":      true,
 	}
 	rateRegex   = regexp.MustCompile(`^[+-]\d+%$`)
 	pitchRegex  = regexp.MustCompile(`^[+-]\d+(Hz|%)?$`)

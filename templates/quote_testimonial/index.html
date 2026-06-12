@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .quote-bg {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: black;
+            transform-origin: center center;
+        }
+        .quote-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            background: radial-gradient(circle at center, rgba(10, 10, 20, 0.4) 0%, rgba(5, 5, 8, 0.85) 100%);
+            z-index: 2;
+        }
+        
+        /* Quote Container */
+        .quote-container {
+            position: absolute;
+            top: 50%;
+            left: 10%;
+            right: 10%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            z-index: 5;
+            padding-left: 40px;
+            border-left: 6px solid #ffaa00; /* Colored dynamically */
+            max-width: 1500px;
+            opacity: 0;
+        }
+        .quote-quotes {
+            font-size: 150px;
+            font-family: Georgia, serif;
+            line-height: 0.1;
+            color: #ffaa00; /* Colored dynamically */
+            opacity: 0.3;
+            margin-bottom: -10px;
+            margin-left: -20px;
+            user-select: none;
+        }
+        .quote-body {
+            font-size: 54px;
+            font-weight: 800;
+            line-height: 1.3;
+            color: #ffffff;
+            text-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            margin-bottom: 30px;
+            letter-spacing: -1px;
+            font-family: 'Roboto', sans-serif;
+        }
+        .quote-author {
+            font-size: 26px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            color: rgba(255, 255, 255, 0.6);
+            text-shadow: 0 5px 15px rgba(0,0,0,0.4);
+            opacity: 0;
+            transform: translateY(15px);
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="quote-overlay"></div>
+        
+        <div class="quote-container" id="quote-container">
+            <div class="quote-quotes">“</div>
+            <div class="quote-body" id="quote-body"></div>
+            <div class="quote-author" id="quote-author"></div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let zoomSpeedMax = 1.12;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Get parameters
+            const params = cena.template.parametros || {};
+            const accentColor = params.accent_color || "#ffaa00";
+            
+            // Set values and colors
+            document.getElementById('quote-body').innerText = params.quote_text || "";
+            const authorEl = document.getElementById('quote-author');
+            if (params.quote_author) {
+                authorEl.innerText = params.quote_author;
+                authorEl.style.display = 'block';
+            } else {
+                authorEl.style.display = 'none';
+            }
+
+            // Apply accent colors dynamically
+            document.getElementById('quote-container').style.borderLeftColor = accentColor;
+            document.querySelector('.quote-quotes').style.color = accentColor;
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'quote-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'quote-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            }
+
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Ken Burns zoom effect on background image
+            if (!isVideo && mediaElement) {
+                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * progress;
+                mediaElement.style.transform = `scale(${currentScale}) translate(${10 * progress}px, ${5 * progress}px)`;
+            }
+
+            // Animate quote container fade & slide-in: 0.0 -> 0.35
+            const container = document.getElementById('quote-container');
+            const containerProg = Math.min(progress / 0.35, 1.0);
+            const containerEase = Math.sin(containerProg * Math.PI / 2);
+            container.style.opacity = containerProg;
+            container.style.transform = `translateY(-50%) translateX(${25 * (1.0 - containerEase)}px)`;
+
+            // Animate quote author fade-in: 0.3 -> 0.65
+            const author = document.getElementById('quote-author');
+            const authorProg = Math.max(0, Math.min((progress - 0.3) / 0.35, 1.0));
+            const authorEase = Math.sin(authorProg * Math.PI / 2);
+            author.style.opacity = authorProg;
+            author.style.transform = `translateY(${15 * (1.0 - authorEase)}px)`;
+        };
+    </script>
+</body>
+</html>

@@ -12,19 +12,33 @@
         .sidebar {
             width: 500px;
             height: 1080px;
-            background-color: rgba(0, 0, 0, 0.65);
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 80px 40px;
+            background: linear-gradient(135deg, rgba(15, 15, 25, 0.8) 0%, rgba(5, 5, 10, 0.55) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 80px 45px;
             display: flex;
             flex-direction: column;
             justify-content: flex-start;
             z-index: 10;
+            box-shadow: 10px 0 40px rgba(0, 0, 0, 0.5);
+        }
+        .specs-tag {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: rgba(255, 255, 255, 0.4);
+            margin-bottom: 12px;
+            text-transform: uppercase;
         }
         .sidebar h2 {
-            font-size: 36px;
-            margin-bottom: 40px;
+            font-size: 38px;
+            font-weight: 800;
+            margin-top: 0;
+            margin-bottom: 45px;
             text-transform: uppercase;
             letter-spacing: 2px;
+            text-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
         .specs-list {
             list-style: none;
@@ -32,27 +46,70 @@
             margin: 0;
         }
         .specs-list li {
-            font-size: 24px;
+            font-size: 23px;
+            font-weight: 600;
             line-height: 1.8;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             display: flex;
             align-items: center;
+            opacity: 0;
+            transform: translateX(-30px);
         }
-        .specs-list li::before {
-            content: "•";
-            margin-right: 15px;
-            font-size: 30px;
+        .specs-list li .item-index {
+            margin-right: 18px;
+            font-size: 16px;
+            font-family: monospace;
+            font-weight: 700;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            display: inline-block;
         }
         .main-content {
             width: 1420px;
             height: 1080px;
             position: relative;
+            background: #020205;
         }
         .main-media {
             width: 100%;
             height: 100%;
             object-fit: contain;
             background: black;
+            z-index: 1;
+        }
+        
+        /* HUD decorative elements */
+        .hud-frame {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            right: 40px;
+            bottom: 40px;
+            pointer-events: none;
+            z-index: 5;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .hud-corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-color: rgba(255, 255, 255, 0.25);
+            border-style: solid;
+            border-width: 0;
+        }
+        .hud-corner.top-left { top: -2px; left: -2px; border-top-width: 2px; border-left-width: 2px; }
+        .hud-corner.top-right { top: -2px; right: -2px; border-top-width: 2px; border-right-width: 2px; }
+        .hud-corner.bottom-left { bottom: -2px; left: -2px; border-bottom-width: 2px; border-left-width: 2px; }
+        .hud-corner.bottom-right { bottom: -2px; right: -2px; border-bottom-width: 2px; border-right-width: 2px; }
+        .hud-grid {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            background-size: 80px 80px;
         }
     </style>
 </head>
@@ -60,13 +117,23 @@
     <div id="viewport">
         <div class="layout-container">
             <div class="sidebar">
+                <div class="specs-tag" id="specs-tag">SYSTEM PARAMETERS</div>
                 <h2 id="specs-title">Especificacoes</h2>
                 <ul class="specs-list" id="specs-ul">
                     <!-- Dynamic bullet items will be placed here -->
                 </ul>
             </div>
-            <div class="main-content" id="media-container">
-                <!-- Media dynamically placed here -->
+            <div class="main-content">
+                <div class="hud-frame">
+                    <div class="hud-corner top-left"></div>
+                    <div class="hud-corner top-right"></div>
+                    <div class="hud-corner bottom-left"></div>
+                    <div class="hud-corner bottom-right"></div>
+                    <div class="hud-grid"></div>
+                </div>
+                <div id="media-container" style="width: 100%; height: 100%;">
+                    <!-- Media dynamically placed here -->
+                </div>
             </div>
         </div>
         <div class="subtitles-container" style="left: 500px;">
@@ -91,6 +158,9 @@
             // Setup title & list colors
             const titleElement = document.getElementById('specs-title');
             titleElement.style.color = highlightColor;
+            
+            const tagElement = document.getElementById('specs-tag');
+            tagElement.style.color = highlightColor;
 
             // Setup specs items
             const specsUl = document.getElementById('specs-ul');
@@ -105,10 +175,24 @@
                 ];
             }
 
-            specItems.forEach(item => {
+            specItems.forEach((item, idx) => {
                 const li = document.createElement('li');
-                li.innerText = item;
-                li.style.color = highlightColor;
+                
+                // Create index span
+                const idxSpan = document.createElement('span');
+                idxSpan.className = 'item-index';
+                idxSpan.innerText = `0${idx + 1}`;
+                idxSpan.style.borderColor = highlightColor + "44"; // translucent border
+                idxSpan.style.color = highlightColor;
+                idxSpan.style.boxShadow = `0 0 10px ${highlightColor}11`;
+                
+                // Create text node
+                const textNode = document.createTextNode(item);
+                
+                li.appendChild(idxSpan);
+                li.appendChild(textNode);
+                li.style.color = "#ffffff";
+                
                 specsUl.appendChild(li);
             });
 
@@ -138,6 +222,25 @@
         window.seekTo = function(timeInSeconds, totalDuration) {
             if (isVideo && mediaElement) {
                 mediaElement.currentTime = timeInSeconds;
+            }
+
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Sequenced reveal of list items
+            const items = document.querySelectorAll('.specs-list li');
+            if (items.length > 0) {
+                items.forEach((item, index) => {
+                    // Stagger start times: item 0 at 0.1, item 1 at 0.28, item 2 at 0.46
+                    const startProg = 0.1 + (index * 0.18);
+                    const itemProgress = (progress - startProg) / 0.20;
+                    const clampedProgress = Math.max(0, Math.min(1.0, itemProgress));
+                    
+                    const easeVal = Math.sin(clampedProgress * Math.PI / 2);
+                    
+                    item.style.opacity = clampedProgress;
+                    item.style.transform = `translateX(${-30 + easeVal * 30}px)`;
+                });
             }
         };
     </script>

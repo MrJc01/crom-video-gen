@@ -156,6 +156,69 @@
             {
                 "id": 7,
                 "template": {
+                    "id": "quote_testimonial",
+                    "parametros": {
+                        "quote_text": "A seguranca de ponta a ponta e a espinha dorsal do consenso descentralizado.",
+                        "quote_author": "Equipe de Engenharia Crom",
+                        "accent_color": "#00ffcc"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/capa_projeto.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "A segurança de ponta a ponta é o pilar principal do nosso consenso descentralizado.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 8,
+                "template": {
+                    "id": "dashboard_kpi",
+                    "parametros": {
+                        "metric_value": "99.98%",
+                        "metric_label": "Taxa de Acerto na Validacao",
+                        "progress_percentage": 99.98,
+                        "accent_color": "#00ffcc"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/diagrama_fluxo.png"
+                    }
+                },
+                "narracao": {
+                    "texto": "Alcançamos uma taxa de acerto na validação superior a noventa e nove por cento.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 9,
+                "template": {
+                    "id": "process_steps",
+                    "parametros": {
+                        "steps": ["Ingestao", "Verificacao", "Consenso"],
+                        "accent_color": "#00ffcc"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/modulo_hardware.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "O fluxo é simples: Ingestão de pacotes, Verificação estática e Consenso descentralizado.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 10,
+                "template": {
                     "id": "outro_credits",
                     "parametros": {
                         "fade_out_duration": 3.0,

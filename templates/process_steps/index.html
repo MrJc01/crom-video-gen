@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .steps-bg {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: black;
+            transform-origin: center center;
+        }
+        .steps-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            background: radial-gradient(circle at center, rgba(10, 10, 20, 0.4) 0%, rgba(5, 5, 8, 0.85) 100%);
+            z-index: 2;
+        }
+        
+        /* Timeline Container */
+        .timeline-container {
+            position: absolute;
+            top: 40%;
+            left: 10%;
+            right: 10%;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        /* The connecting horizontal bar */
+        .timeline-track {
+            position: relative;
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+            margin-bottom: 50px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+        }
+        .timeline-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%; /* Animated via seekTo */
+            background: linear-gradient(90deg, #ffaa00, #ff5500);
+            box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+            border-radius: 3px;
+            transition: width 0.1s linear;
+        }
+        
+        /* Steps Wrapper */
+        .steps-wrapper {
+            position: absolute;
+            top: -22px; /* Center align with track */
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+        }
+        .step-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 250px;
+            position: relative;
+        }
+        
+        /* Node circle marker */
+        .node-marker {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #111116;
+            border: 3px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 16px;
+            font-weight: 800;
+            color: rgba(255, 255, 255, 0.4);
+            z-index: 6;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+            transition: all 0.2s ease;
+        }
+        .node-marker.active {
+            border-color: #ffaa00;
+            color: #ffffff;
+            box-shadow: 0 0 20px rgba(255, 170, 0, 0.4), 0 10px 20px rgba(0,0,0,0.5);
+        }
+        .node-marker.completed {
+            background: #ffaa00;
+            border-color: #ffaa00;
+            color: #111116;
+            box-shadow: 0 0 10px rgba(255, 170, 0, 0.2);
+        }
+        
+        /* Node label card */
+        .node-card {
+            margin-top: 25px;
+            background: rgba(15, 15, 25, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 15px 20px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 18px;
+            font-weight: 600;
+            width: 220px;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.5);
+            transition: all 0.3s ease;
+        }
+        .node-card.active {
+            color: #ffffff;
+            border-color: rgba(255, 170, 0, 0.4);
+            background: linear-gradient(135deg, rgba(30, 20, 10, 0.8) 0%, rgba(15, 15, 25, 0.75) 100%);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+        .node-card.completed {
+            color: rgba(255, 255, 255, 0.85);
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="steps-overlay"></div>
+        
+        <div class="timeline-container">
+            <div class="timeline-track">
+                <div class="timeline-progress" id="progress-bar"></div>
+                <div class="steps-wrapper" id="steps-wrapper">
+                    <!-- Dynamic step nodes will go here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let zoomSpeedMax = 1.12;
+        let stepCount = 0;
+        let accentColor = "#ffaa00";
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Get parameters
+            const params = cena.template.parametros || {};
+            accentColor = params.accent_color || "#ffaa00";
+            
+            // Set up timeline progress bar color
+            document.getElementById('progress-bar').style.background = `linear-gradient(90deg, ${accentColor}, ${accentColor}dd)`;
+            document.getElementById('progress-bar').style.boxShadow = `0 0 10px ${accentColor}88`;
+
+            // Setup step nodes
+            let stepItems = params.steps;
+            if (!stepItems || !Array.isArray(stepItems)) {
+                stepItems = ["Etapa 1", "Etapa 2", "Etapa 3"];
+            }
+            stepCount = stepItems.length;
+
+            const wrapper = document.getElementById('steps-wrapper');
+            wrapper.innerHTML = ''; // clear
+
+            stepItems.forEach((stepName, idx) => {
+                const node = document.createElement('div');
+                node.className = 'step-node';
+                node.id = `step-node-${idx}`;
+
+                // Circle marker
+                const marker = document.createElement('div');
+                marker.className = 'node-marker';
+                marker.id = `marker-${idx}`;
+                marker.innerText = idx + 1;
+
+                // Card label
+                const card = document.createElement('div');
+                card.className = 'node-card';
+                card.id = `card-${idx}`;
+                card.innerText = stepName;
+
+                node.appendChild(marker);
+                node.appendChild(card);
+                wrapper.appendChild(node);
+            });
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'steps-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'steps-bg';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            }
+
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Ken Burns zoom effect on background image
+            if (!isVideo && mediaElement) {
+                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * progress;
+                mediaElement.style.transform = `scale(${currentScale}) translate(${12 * progress}px, ${8 * progress}px)`;
+            }
+
+            // Animate horizontal progress bar width: 0.1 -> 0.90 of duration
+            let timelineProgress = 0;
+            if (progress >= 0.1) {
+                timelineProgress = Math.min((progress - 0.1) / 0.8, 1.0);
+            }
+            document.getElementById('progress-bar').style.width = `${timelineProgress * 100}%`;
+
+            // Calculate active step index based on progress
+            // Split the timeline progress range (0.1 -> 0.9) into equal slots
+            const slotSize = 1.0 / stepCount;
+            const currentSlot = Math.floor(timelineProgress / slotSize);
+            
+            for (let idx = 0; idx < stepCount; idx++) {
+                const marker = document.getElementById(`marker-${idx}`);
+                const card = document.getElementById(`card-${idx}`);
+                
+                if (!marker || !card) continue;
+
+                // Step status coloring
+                if (idx < currentSlot) {
+                    // Completed step
+                    marker.className = 'node-marker completed';
+                    marker.style.background = accentColor;
+                    marker.style.borderColor = accentColor;
+                    marker.style.color = '#111116';
+                    
+                    card.className = 'node-card completed';
+                    card.style.borderColor = 'rgba(255,255,255,0.08)';
+                } else if (idx === currentSlot && timelineProgress > 0) {
+                    // Active step
+                    marker.className = 'node-marker active';
+                    marker.style.borderColor = accentColor;
+                    marker.style.color = '#ffffff';
+                    marker.style.background = '#111116';
+                    marker.style.boxShadow = `0 0 20px ${accentColor}66`;
+                    
+                    card.className = 'node-card active';
+                    card.style.borderColor = `${accentColor}66`;
+                } else {
+                    // Future step
+                    marker.className = 'node-marker';
+                    marker.style.background = '#111116';
+                    marker.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                    marker.style.color = 'rgba(255, 255, 255, 0.4)';
+                    marker.style.boxShadow = '0 10px 25px rgba(0,0,0,0.6)';
+                    
+                    card.className = 'node-card';
+                    card.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                }
+            }
+        };
+    </script>
+</body>
+</html>

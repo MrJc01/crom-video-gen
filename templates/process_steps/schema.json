@@ -1,0 +1,9 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "steps": { "obrigatorio": true, "tipo": "array" },
+    "accent_color": { "obrigatorio": false, "tipo": "string" }
+  }
+}

@@ -12,8 +12,42 @@
             height: 1080px;
             z-index: 5;
             pointer-events: none;
-            /* Radial gradient spotlight */
-            background: radial-gradient(circle at 50% 50%, transparent 20%, rgba(0, 0, 0, 0.85) 65%);
+            transition: background 0.1s linear;
+        }
+        .main-media {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: black;
+            transition: transform 0.1s linear;
+        }
+        
+        /* HUD reticle styling */
+        .hud-reticle {
+            position: absolute;
+            width: 180px;
+            height: 180px;
+            z-index: 10;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            transform-origin: center center;
+            opacity: 0;
+        }
+        .focus-label {
+            position: absolute;
+            top: 195px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #ffaa00;
+            background: rgba(10, 10, 15, 0.85);
+            border: 1px solid rgba(255, 170, 0, 0.4);
+            padding: 4px 12px;
+            border-radius: 4px;
+            white-space: nowrap;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
         }
     </style>
 </head>
@@ -23,6 +57,23 @@
             <!-- Media will be dynamically injected here -->
         </div>
         <div class="vignette-overlay" id="vignette"></div>
+        
+        <div id="hud-reticle" class="hud-reticle" style="display: none;">
+            <svg width="180" height="180" viewBox="0 0 200 200">
+                <!-- Outer bracket corners -->
+                <path d="M 50 15 L 15 15 L 15 50" stroke="#ffaa00" stroke-width="4" fill="none" stroke-linecap="round"></path>
+                <path d="M 150 15 L 185 15 L 185 50" stroke="#ffaa00" stroke-width="4" fill="none" stroke-linecap="round"></path>
+                <path d="M 50 185 L 15 185 L 15 150" stroke="#ffaa00" stroke-width="4" fill="none" stroke-linecap="round"></path>
+                <path d="M 150 185 L 185 185 L 185 150" stroke="#ffaa00" stroke-width="4" fill="none" stroke-linecap="round"></path>
+                <!-- Dotted rotating circle -->
+                <circle cx="100" cy="100" r="65" stroke="#ffaa00" stroke-width="2" fill="none" stroke-dasharray="12 16" id="rot-circle"></circle>
+                <!-- Central crosshair -->
+                <line x1="88" y1="100" x2="112" y2="100" stroke="#ffaa00" stroke-width="2.5"></line>
+                <line x1="100" y1="88" x2="100" y2="112" stroke="#ffaa00" stroke-width="2.5"></line>
+            </svg>
+            <div class="focus-label" id="focus-label">TARGET ACQUIRED</div>
+        </div>
+
         <div class="subtitles-container">
             <div id="subtitles" class="subtitles-text"></div>
         </div>
@@ -31,6 +82,8 @@
     <script>
         let mediaElement = null;
         let isVideo = false;
+        let posX = "50%";
+        let posY = "50%";
 
         window.setupTemplate = function(cenaJson) {
             const cena = JSON.parse(cenaJson);
@@ -41,9 +94,10 @@
             // Set vignette coordinates based on focus_area
             const params = cena.template.parametros || {};
             const focusArea = params.focus_area || "center";
+            const darkenBg = params.darken_bg !== undefined ? params.darken_bg : true;
             
-            let posX = "50%";
-            let posY = "50%";
+            posX = "50%";
+            posY = "50%";
             switch (focusArea) {
                 case "top_right":
                     posX = "80%";
@@ -64,7 +118,14 @@
             }
 
             const vignette = document.getElementById('vignette');
-            vignette.style.background = `radial-gradient(circle at ${posX} ${posY}, transparent 20%, rgba(0, 0, 0, 0.85) 65%)`;
+            const darkness = darkenBg ? "0.9" : "0.7";
+            vignette.style.background = `radial-gradient(circle at ${posX} ${posY}, transparent 15%, rgba(0, 0, 0, ${darkness}) 60%)`;
+
+            // Position and color the HUD reticle
+            const reticle = document.getElementById('hud-reticle');
+            reticle.style.left = posX;
+            reticle.style.top = posY;
+            reticle.style.display = 'block';
 
             // Set media
             const container = document.getElementById('container');
@@ -87,11 +148,43 @@
                     isVideo = false;
                 }
             }
+
+            // Set transform origin for focus zooming
+            if (mediaElement) {
+                mediaElement.style.transformOrigin = `${posX} ${posY}`;
+            }
         };
 
         window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
             if (isVideo && mediaElement) {
                 mediaElement.currentTime = timeInSeconds;
+            }
+
+            // Camera zooms in slightly centered on the focus area
+            if (mediaElement) {
+                const currentScale = 1.0 + (0.15 * progress);
+                mediaElement.style.transform = `scale(${currentScale})`;
+            }
+
+            // HUD reticle animation driven by seek progress
+            const reticle = document.getElementById('hud-reticle');
+            if (reticle) {
+                // Entrance animation in first 20% of duration (scale down and fade in)
+                const entryProgress = Math.min(progress / 0.2, 1.0);
+                const opacity = entryProgress;
+                const entryScale = 2.0 - (1.0 * entryProgress);
+
+                // Constant rotation
+                const rot = progress * 90; // Rotate 90 degrees
+
+                // Subtle scale pulsing
+                const pulse = 1.0 + 0.05 * Math.sin(progress * Math.PI * 4);
+
+                reticle.style.opacity = opacity;
+                reticle.style.transform = `translate(-50%, -50%) scale(${entryScale * pulse}) rotate(${rot}deg)`;
             }
         };
     </script>

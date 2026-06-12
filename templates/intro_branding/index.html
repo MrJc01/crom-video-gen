@@ -18,15 +18,53 @@
             top: 40%;
             left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 64px;
-            font-weight: bold;
+            font-size: 72px;
+            font-weight: 900;
             text-transform: uppercase;
-            letter-spacing: 4px;
+            letter-spacing: 12px;
             text-align: center;
             z-index: 5;
             color: #ffffff;
-            text-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            text-shadow: 0 15px 45px rgba(0,0,0,0.9);
             width: 1600px;
+            transform-origin: center center;
+        }
+        .branding-subtitle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 22px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 8px;
+            color: rgba(255, 255, 255, 0.7);
+            z-index: 5;
+            margin-top: 70px;
+            text-shadow: 0 5px 15px rgba(0,0,0,0.8);
+            width: 1600px;
+            text-align: center;
+            transform-origin: center center;
+        }
+        .progress-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 8px;
+            width: 0%;
+            background: linear-gradient(90deg, #ffaa00, #ff5500);
+            box-shadow: 0 0 15px rgba(255, 170, 0, 0.5);
+            z-index: 10;
+        }
+        .gradient-vignette {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            background: radial-gradient(circle, transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+            z-index: 3;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -36,7 +74,11 @@
             <img id="bg-media" src="" style="transform-origin: center center;">
         </div>
         <div id="overlay-bg" class="overlay"></div>
+        <div class="gradient-vignette"></div>
         <div id="branding-title" class="branding-title"></div>
+        <div id="branding-subtitle" class="branding-subtitle"></div>
+        <div id="progress-line" class="progress-line"></div>
+        
         <div class="subtitles-container">
             <div id="subtitles" class="subtitles-text"></div>
         </div>
@@ -46,6 +88,7 @@
         let durationSec = 1.0;
         let zoomSpeedMax = 1.1;
         let bgImage = null;
+        let overlayOpacity = 0.4;
 
         window.setupTemplate = function(cenaJson) {
             const cena = JSON.parse(cenaJson);
@@ -62,28 +105,67 @@
             // Get parameters
             const params = cena.template.parametros || {};
             zoomSpeedMax = params.zoom_speed !== undefined ? params.zoom_speed : 1.1;
-            const overlayOpacity = params.overlay_opacity !== undefined ? params.overlay_opacity : 0.4;
+            overlayOpacity = params.overlay_opacity !== undefined ? params.overlay_opacity : 0.4;
             
             document.getElementById('overlay-bg').style.opacity = overlayOpacity;
 
             // Set branding title (text0)
             const titleEl = document.getElementById('branding-title');
+            const subtitleEl = document.getElementById('branding-subtitle');
+            
             if (params.text0) {
                 titleEl.innerText = params.text0;
                 titleEl.style.display = 'block';
+                
+                // Set subtitle text if provided or a default sleek fallback
+                subtitleEl.innerText = params.text1 || "SISTEMA SEGURO & DESCENTRALIZADO";
+                subtitleEl.style.display = 'block';
             } else {
                 titleEl.style.display = 'none';
+                subtitleEl.style.display = 'none';
             }
         };
 
         window.seekTo = function(timeInSeconds, totalDuration) {
             durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+            
+            // Zoom background image
             if (bgImage) {
-                // Calculate zoom scale linearly over time
-                const progress = timeInSeconds / durationSec;
-                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * Math.min(progress, 1.0);
+                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * progress;
                 bgImage.style.transform = `scale(${currentScale})`;
             }
+
+            // Progress line width
+            document.getElementById('progress-line').style.width = `${progress * 100}%`;
+
+            // Title and Subtitle animation driven by seek
+            const titleEl = document.getElementById('branding-title');
+            const subtitleEl = document.getElementById('branding-subtitle');
+
+            // Title reveal phase: 0.0 -> 0.4
+            const titleProgress = Math.min(progress / 0.4, 1.0);
+            const titleOpacity = titleProgress;
+            const titleBlur = 15 * (1.0 - titleProgress);
+            const titleSpacing = 16 - (6 * titleProgress);
+            const titleScale = 0.92 + (0.08 * titleProgress);
+
+            titleEl.style.opacity = titleOpacity;
+            titleEl.style.filter = `blur(${titleBlur}px)`;
+            titleEl.style.letterSpacing = `${titleSpacing}px`;
+            titleEl.style.transform = `translate(-50%, -50%) scale(${titleScale})`;
+
+            // Subtitle reveal phase: 0.25 -> 0.65
+            const subtitleProgress = Math.max(0, Math.min((progress - 0.25) / 0.4, 1.0));
+            const subOpacity = subtitleProgress;
+            const subBlur = 10 * (1.0 - subtitleProgress);
+            const subSpacing = 12 - (4 * subtitleProgress);
+            const subScale = 0.95 + (0.05 * subtitleProgress);
+
+            subtitleEl.style.opacity = subOpacity;
+            subtitleEl.style.filter = `blur(${subBlur}px)`;
+            subtitleEl.style.letterSpacing = `${subSpacing}px`;
+            subtitleEl.style.transform = `translate(-50%, -50%) scale(${subScale})`;
         };
     </script>
 </body>
