@@ -1,0 +1,11 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": false, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "question": { "obrigatorio": true, "tipo": "string" },
+    "answer": { "obrigatorio": true, "tipo": "string" },
+    "flip_animation": { "obrigatorio": false, "tipo": "boolean" },
+    "timer_bar": { "obrigatorio": false, "tipo": "number" }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": false, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "title": { "obrigatorio": true, "tipo": "string" },
+    "column_a": { "obrigatorio": true, "tipo": "object" },
+    "column_b": { "obrigatorio": true, "tipo": "object" },
+    "highlight_winner": { "obrigatorio": false, "tipo": "string" }
+  }
+}

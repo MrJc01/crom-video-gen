@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .background-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #0f172a 0%, #020617 100%);
+        }
+        .background-container img, .background-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.22;
+            filter: blur(5px);
+        }
+        .concept-card {
+            position: absolute;
+            top: 45%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 1100px;
+            padding: 60px;
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 40px 100px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            transform-origin: center center;
+        }
+        .term-header {
+            font-size: 64px;
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin: 0;
+            color: #ffffff;
+            text-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            transform-origin: left center;
+        }
+        .phonetic {
+            font-size: 24px;
+            color: rgba(255, 255, 255, 0.5);
+            font-style: italic;
+            margin-top: 10px;
+            margin-bottom: 24px;
+            font-family: 'Times New Roman', Times, serif;
+            letter-spacing: 1px;
+        }
+        .divider {
+            height: 4px;
+            width: 0%; /* animate to 100% */
+            background: #ffaa00; /* fallback dynamic */
+            border-radius: 2px;
+            margin-bottom: 30px;
+            box-shadow: 0 0 12px rgba(255, 170, 0, 0.4);
+            transform-origin: left center;
+        }
+        .definition {
+            font-size: 32px;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.9);
+            margin: 0;
+            font-weight: 300;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <!-- Background (optional) -->
+        <div class="background-container" id="bg-container"></div>
+        
+        <!-- Concept Definition Card -->
+        <div id="concept-card" class="concept-card">
+            <h1 id="term-header" class="term-header"></h1>
+            <div id="phonetic" class="phonetic"></div>
+            <div id="divider" class="divider"></div>
+            <p id="definition-text" class="definition"></p>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let accentColor = "#ffaa00";
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            const bgContainer = document.getElementById('bg-container');
+            bgContainer.innerHTML = '';
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            accentColor = params.accent_color || "#ffaa00";
+            
+            // Populate content
+            document.getElementById('term-header').innerText = params.term || "";
+            document.getElementById('term-header').style.color = accentColor;
+            
+            if (params.phonetic_spelling) {
+                document.getElementById('phonetic').innerText = params.phonetic_spelling;
+                document.getElementById('phonetic').style.display = 'block';
+            } else {
+                document.getElementById('phonetic').style.display = 'none';
+            }
+
+            document.getElementById('definition-text').innerText = params.definition || "";
+            
+            // Apply accent colors dynamically
+            const divider = document.getElementById('divider');
+            divider.style.background = accentColor;
+            divider.style.boxShadow = `0 0 15px ${accentColor}80`; // 50% opacity glow
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Handle background media seeking
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            } else if (!isVideo && mediaElement) {
+                const scale = 1.0 + 0.06 * progress;
+                mediaElement.style.transform = `scale(${scale})`;
+            }
+
+            // Card entrance: 0.0 -> 0.25 duration
+            const cardProgress = Math.min(progress / 0.25, 1.0);
+            const cardOpacity = cardProgress;
+            const cardScale = 0.95 + (0.05 * cardProgress);
+            const cardTranslateY = -50 + (5 * (1.0 - cardProgress)); // dynamic translate
+            
+            const card = document.getElementById('concept-card');
+            card.style.opacity = cardOpacity;
+            card.style.transform = `translate(-50%, ${cardTranslateY}%) scale(${cardScale})`;
+
+            // Divider line drawing animation: 0.2 -> 0.45 duration
+            const dividerProgress = Math.max(0, Math.min((progress - 0.2) / 0.25, 1.0));
+            document.getElementById('divider').style.width = `${dividerProgress * 100}%`;
+
+            // Text reveal: 0.35 -> 0.75 duration
+            const textProgress = Math.max(0, Math.min((progress - 0.35) / 0.4, 1.0));
+            const textEl = document.getElementById('definition-text');
+            textEl.style.opacity = textProgress;
+            textEl.style.transform = `translateY(${10 * (1.0 - textProgress)}px)`;
+        };
+    </script>
+</body>
+</html>

@@ -17,16 +17,21 @@ var (
 	validCodecs     = map[string]bool{"aac": true, "mp3": true, "libmp3lame": true}
 	validAudioRates = map[int]bool{22050: true, 32000: true, 44100: true, 48000: true}
 	validTemplates  = map[string]bool{
-		"intro_branding":     true,
-		"cinematic_video":    true,
-		"technical_specs":    true,
-		"split_screen_demo":  true,
-		"highlight_focus":    true,
-		"action_video_fast":  true,
-		"outro_credits":      true,
-		"quote_testimonial":  true,
-		"dashboard_kpi":      true,
-		"process_steps":      true,
+		"intro_branding":      true,
+		"cinematic_video":     true,
+		"technical_specs":     true,
+		"split_screen_demo":   true,
+		"highlight_focus":     true,
+		"action_video_fast":   true,
+		"outro_credits":       true,
+		"quote_testimonial":   true,
+		"dashboard_kpi":       true,
+		"process_steps":       true,
+		"code_snippet_typing": true,
+		"concept_definition":  true,
+		"comparison_matrix":   true,
+		"q_and_a_flashcard":   true,
+		"roadmap_timeline":    true,
 	}
 	rateRegex   = regexp.MustCompile(`^[+-]\d+%$`)
 	pitchRegex  = regexp.MustCompile(`^[+-]\d+(Hz|%)?$`)
@@ -197,6 +202,11 @@ func (c *ConfigInput) Validate() error {
 				_, okSlice := paramVal.([]interface{})
 				if !okSlice {
 					return fmt.Errorf("cena %d (índice %d) parâmetro '%s' deve ser do tipo array (recebido: %T)", cena.ID, i, schemaKey, paramVal)
+				}
+			case "object":
+				_, okObj := paramVal.(map[string]interface{})
+				if !okObj {
+					return fmt.Errorf("cena %d (índice %d) parâmetro '%s' deve ser do tipo object (recebido: %T)", cena.ID, i, schemaKey, paramVal)
 				}
 			}
 		}

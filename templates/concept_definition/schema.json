@@ -1,0 +1,11 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": false, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "term": { "obrigatorio": true, "tipo": "string" },
+    "phonetic_spelling": { "obrigatorio": false, "tipo": "string" },
+    "definition": { "obrigatorio": true, "tipo": "string" },
+    "accent_color": { "obrigatorio": false, "tipo": "string" }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": false, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "orientation": { "obrigatorio": false, "tipo": "string" },
+    "current_step_index": { "obrigatorio": true, "tipo": "number" },
+    "milestones": { "obrigatorio": true, "tipo": "array" },
+    "completed_color": { "obrigatorio": false, "tipo": "string" },
+    "pending_color": { "obrigatorio": false, "tipo": "string" }
+  }
+}

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .background-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #111827 0%, #030712 100%);
+        }
+        .background-container img, .background-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.2;
+            filter: blur(5px);
+        }
+        .perspective-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            perspective: 2000px;
+            z-index: 5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .flashcard {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 1000px;
+            height: 550px;
+            transform: translate(-50%, -50%);
+            transform-style: preserve-3d;
+            border-radius: 28px;
+            z-index: 6;
+            transform-origin: center center;
+        }
+        .card-face {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            border-radius: 28px;
+            padding: 50px 60px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        .card-front {
+            z-index: 2;
+            transform: rotateY(0deg);
+        }
+        .card-back {
+            transform: rotateY(180deg);
+            background: rgba(15, 23, 42, 0.85);
+            border-color: rgba(0, 255, 204, 0.2);
+        }
+        .card-tag {
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        .tag-q {
+            color: #ffaa00;
+        }
+        .tag-a {
+            color: #00ffcc;
+            text-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+        }
+        .card-text {
+            font-size: 40px;
+            line-height: 1.5;
+            color: #ffffff;
+            font-weight: 700;
+            margin: auto 0;
+            text-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .text-answer {
+            font-weight: 400;
+            font-size: 36px;
+            color: rgba(255, 255, 255, 0.95);
+        }
+        .timer-bar-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+        .timer-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #ffaa00, #ff5500);
+            box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+            border-radius: 3px;
+            transform-origin: left center;
+        }
+        .footer-logo {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.3);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <!-- Background -->
+        <div class="background-container" id="bg-container"></div>
+        
+        <!-- Perspective Wrapper -->
+        <div class="perspective-container">
+            <div id="flashcard" class="flashcard">
+                <!-- Front: Question -->
+                <div class="card-face card-front" id="card-front">
+                    <div class="card-tag tag-q">PERGUNTA</div>
+                    <div id="question-text" class="card-text"></div>
+                    <div style="width: 100%;">
+                        <div class="footer-logo">CONSENSO DISTRIBUÍDO CROM</div>
+                        <div class="timer-bar-container">
+                            <div id="timer-bar" class="timer-bar"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Back: Answer -->
+                <div class="card-face card-back" id="card-back">
+                    <div class="card-tag tag-a">RESPOSTA</div>
+                    <div id="answer-text" class="card-text text-answer"></div>
+                    <div class="footer-logo">VALIDAÇÃO CONFIRMADA</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let flipAnimation = true;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            const bgContainer = document.getElementById('bg-container');
+            bgContainer.innerHTML = '';
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            document.getElementById('question-text').innerText = params.question || "";
+            document.getElementById('answer-text').innerText = params.answer || "";
+            
+            flipAnimation = params.flip_animation !== undefined ? params.flip_animation : true;
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Handle background media seeking
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            } else if (!isVideo && mediaElement) {
+                const scale = 1.0 + 0.05 * progress;
+                mediaElement.style.transform = `scale(${scale})`;
+            }
+
+            // Card entrance: 0.0 -> 0.15
+            const entranceProgress = Math.min(progress / 0.15, 1.0);
+            const scale = 0.9 + (0.1 * entranceProgress);
+            const opacity = entranceProgress;
+
+            const card = document.getElementById('flashcard');
+            
+            // Timer progress: shrinks from 100% to 0% during 0.15 -> 0.45 progress
+            const timerProgress = Math.max(0, Math.min((progress - 0.15) / 0.30, 1.0));
+            const timerBar = document.getElementById('timer-bar');
+            timerBar.style.transform = `scaleX(${1.0 - timerProgress})`;
+
+            if (flipAnimation) {
+                // Card rotation (Y-axis): rotates 180 degrees from 0.45 to 0.65 progress
+                const flipProgress = Math.max(0, Math.min((progress - 0.45) / 0.20, 1.0));
+                const rotY = flipProgress * 180;
+                
+                card.style.transform = `translate(-50%, -50%) scale(${scale}) rotateY(${rotY}deg)`;
+                card.style.opacity = opacity;
+            } else {
+                // Fade transition: Question fades out and Answer fades in around 0.5 progress
+                card.style.transform = `translate(-50%, -50%) scale(${scale})`;
+                card.style.opacity = opacity;
+
+                const frontFace = document.getElementById('card-front');
+                const backFace = document.getElementById('card-back');
+
+                // Adjust backface rotation to be 0 so it sits in place without Y rotation
+                backFace.style.transform = 'rotateY(0deg)';
+                
+                const transitionProgress = Math.max(0, Math.min((progress - 0.45) / 0.12, 1.0));
+                frontFace.style.opacity = 1.0 - transitionProgress;
+                backFace.style.opacity = transitionProgress;
+            }
+        };
+    </script>
+</body>
+</html>

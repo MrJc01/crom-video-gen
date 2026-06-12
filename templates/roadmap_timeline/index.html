@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .background-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #0f172a 0%, #030712 100%);
+        }
+        .background-container img, .background-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.18;
+            filter: blur(5px);
+        }
+        .timeline-wrapper {
+            position: absolute;
+            top: 45%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 1550px;
+            height: 520px;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(20px);
+            border-radius: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            padding: 60px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 5;
+        }
+        /* Horizontal Style */
+        .timeline-h {
+            display: flex;
+            width: 100%;
+            position: relative;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .line-h {
+            position: absolute;
+            left: 0;
+            top: 40px;
+            height: 6px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.08);
+            z-index: 1;
+            border-radius: 3px;
+        }
+        .progress-line-h {
+            position: absolute;
+            left: 0;
+            top: 40px;
+            height: 6px;
+            width: 0%; /* animates */
+            background: linear-gradient(90deg, #00ffcc, #00bbff);
+            z-index: 2;
+            border-radius: 3px;
+            box-shadow: 0 0 15px rgba(0, 255, 204, 0.5);
+            transform-origin: left center;
+        }
+        .node-h {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 250px;
+            position: relative;
+            z-index: 3;
+            opacity: 0; /* animates */
+        }
+        .node-circle {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 800;
+            z-index: 4;
+            background: #1e293b;
+            border: 4px solid #334155;
+            color: #64748b;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            transition: all 0.15s linear;
+        }
+        .node-label {
+            margin-top: 24px;
+            font-size: 26px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-align: center;
+            width: 100%;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+        
+        /* Vertical Style alternative */
+        .timeline-v {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
+            position: relative;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-left: 200px;
+        }
+        .line-v {
+            position: absolute;
+            left: 240px;
+            top: 0;
+            width: 6px;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.08);
+            z-index: 1;
+            border-radius: 3px;
+        }
+        .progress-line-v {
+            position: absolute;
+            left: 240px;
+            top: 0;
+            width: 6px;
+            height: 0%; /* animates */
+            background: linear-gradient(180deg, #00ffcc, #00bbff);
+            z-index: 2;
+            border-radius: 3px;
+            box-shadow: 0 0 15px rgba(0, 255, 204, 0.5);
+            transform-origin: top center;
+        }
+        .node-v {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: relative;
+            z-index: 3;
+            opacity: 0;
+        }
+        .node-label-v {
+            margin-left: 40px;
+            font-size: 28px;
+            font-weight: 600;
+            color: #94a3b8;
+        }
+
+        /* Status colors */
+        .completed-circle {
+            background: #022c22 !important;
+            border-color: #00ffcc !important;
+            color: #00ffcc !important;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.2) !important;
+        }
+        .completed-label {
+            color: #f8fafc !important;
+        }
+        .active-circle {
+            background: #0f172a !important;
+            border-color: #38bdf8 !important;
+            color: #38bdf8 !important;
+            box-shadow: 0 0 35px rgba(56, 189, 248, 0.6) !important;
+        }
+        .active-label {
+            color: #38bdf8 !important;
+            font-weight: 800 !important;
+            text-shadow: 0 0 10px rgba(56, 189, 248, 0.3) !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <!-- Background -->
+        <div class="background-container" id="bg-container"></div>
+        
+        <!-- Timeline Container -->
+        <div class="timeline-wrapper">
+            <div id="timeline-body" class="timeline-h">
+                <div id="base-line" class="line-h"></div>
+                <div id="progress-line" class="progress-line-h"></div>
+                <!-- Nodes generated dynamically -->
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let isVertical = false;
+        let milestones = [];
+        let currentStepIndex = 0;
+        let completedColor = "#00ffcc";
+        let pendingColor = "#555555";
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            const bgContainer = document.getElementById('bg-container');
+            bgContainer.innerHTML = '';
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            isVertical = params.orientation === 'vertical';
+            milestones = params.milestones || [];
+            currentStepIndex = params.current_step_index !== undefined ? params.current_step_index : 0;
+            completedColor = params.completed_color || "#00ffcc";
+            pendingColor = params.pending_color || "#555555";
+
+            // Draw container timeline layout
+            const container = document.getElementById('timeline-body');
+            container.innerHTML = '';
+
+            if (isVertical) {
+                container.className = 'timeline-v';
+                container.innerHTML = `
+                    <div id="base-line" class="line-v"></div>
+                    <div id="progress-line" class="progress-line-v"></div>
+                `;
+            } else {
+                container.className = 'timeline-h';
+                container.innerHTML = `
+                    <div id="base-line" class="line-h"></div>
+                    <div id="progress-line" class="progress-line-h"></div>
+                `;
+            }
+
+            // Generate nodes
+            milestones.forEach((item, index) => {
+                const node = document.createElement('div');
+                let statusClass = '';
+                let labelStatusClass = '';
+                
+                if (index < currentStepIndex) {
+                    statusClass = 'completed-circle';
+                    labelStatusClass = 'completed-label';
+                } else if (index === currentStepIndex) {
+                    statusClass = 'active-circle';
+                    labelStatusClass = 'active-label';
+                }
+
+                if (isVertical) {
+                    node.className = 'node-v';
+                    node.id = `node-${index}`;
+                    node.innerHTML = `
+                        <div class="node-circle ${statusClass}" id="circle-${index}">${index + 1}</div>
+                        <div class="node-label-v ${labelStatusClass}" id="label-${index}">${item}</div>
+                    `;
+                } else {
+                    node.className = 'node-h';
+                    node.id = `node-${index}`;
+                    node.innerHTML = `
+                        <div class="node-circle ${statusClass}" id="circle-${index}">${index + 1}</div>
+                        <div class="node-label ${labelStatusClass}" id="label-${index}">${item}</div>
+                    `;
+                }
+                container.appendChild(node);
+            });
+
+            // Adjust colors of custom styling dynamically
+            milestones.forEach((_, index) => {
+                const circle = document.getElementById(`circle-${index}`);
+                if (index < currentStepIndex) {
+                    circle.style.borderColor = completedColor;
+                    circle.style.color = completedColor;
+                    circle.style.boxShadow = `0 0 15px ${completedColor}40`;
+                } else if (index > currentStepIndex) {
+                    circle.style.borderColor = pendingColor;
+                    circle.style.color = pendingColor;
+                }
+            });
+            
+            // Adjust progress line gradient base colors
+            const progressLine = document.getElementById('progress-line');
+            if (isVertical) {
+                progressLine.style.background = `linear-gradient(180deg, ${completedColor}, #38bdf8)`;
+            } else {
+                progressLine.style.background = `linear-gradient(90deg, ${completedColor}, #38bdf8)`;
+            }
+            progressLine.style.boxShadow = `0 0 15px ${completedColor}80`;
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Handle background media seeking
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            } else if (!isVideo && mediaElement) {
+                const scale = 1.0 + 0.05 * progress;
+                mediaElement.style.transform = `scale(${scale})`;
+            }
+
+            // 1. Connection line fill: 0.0 -> 0.35
+            const lineProgress = Math.min(progress / 0.35, 1.0);
+            const progressLine = document.getElementById('progress-line');
+            
+            // Calculate how much line to draw (up to the current step node index proportion)
+            let maxLineVal = 100;
+            if (milestones.length > 1) {
+                // Connect up to the active circle node (or full if it's past the last)
+                const targetStep = Math.min(currentStepIndex, milestones.length - 1);
+                maxLineVal = (targetStep / (milestones.length - 1)) * 100;
+            }
+            const currentLineDraw = lineProgress * maxLineVal;
+            
+            if (isVertical) {
+                progressLine.style.height = `${currentLineDraw}%`;
+            } else {
+                progressLine.style.width = `${currentLineDraw}%`;
+            }
+
+            // 2. Nodes fade-in/pop-up sequentially: 0.25 -> 0.75 progress
+            const nodesStart = 0.25;
+            const nodesDuration = 0.5;
+            
+            milestones.forEach((_, index) => {
+                const nodeStart = nodesStart + (index / milestones.length) * nodesDuration;
+                const nodeProgress = Math.max(0, Math.min((progress - nodeStart) / 0.15, 1.0));
+                
+                const node = document.getElementById(`node-${index}`);
+                if (node) {
+                    node.style.opacity = nodeProgress;
+                    
+                    // Subtle slide-up pop-in
+                    const translateY = 20 * (1.0 - nodeProgress);
+                    if (isVertical) {
+                        node.style.transform = `translateY(${translateY}px)`;
+                    } else {
+                        node.style.transform = `translateY(${translateY}px)`;
+                    }
+                }
+            });
+
+            // 3. Active node pulse/glow effect: 0.70 -> 1.0 progress
+            const pulseProgress = Math.max(0, Math.min((progress - 0.7) / 0.3, 1.0));
+            const activeCircle = document.getElementById(`circle-${currentStepIndex}`);
+            if (activeCircle) {
+                // Pulsate scale based on progress (deterministically using sine wave of time)
+                const scalePulse = 1.0 + Math.sin(timeInSeconds * 5) * 0.06 * pulseProgress;
+                activeCircle.style.transform = `scale(${scalePulse})`;
+            }
+        };
+    </script>
+</body>
+</html>

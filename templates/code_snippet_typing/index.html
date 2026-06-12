@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <link rel="stylesheet" href="/templates/common/dracula.min.css">
+    <style>
+        .background-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #1e1e2f 0%, #0f0f1b 100%);
+        }
+        .background-container img, .background-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.25;
+            filter: blur(8px);
+        }
+        .editor-wrapper {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -55%);
+            width: 1300px;
+            height: 650px;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            background: rgba(40, 42, 54, 0.85); /* Dracula background with opacity */
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .titlebar {
+            height: 48px;
+            background: rgba(30, 31, 41, 0.9);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            position: relative;
+        }
+        .window-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .win-btn {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .btn-close { background-color: #ff5f56; }
+        .btn-minimize { background-color: #ffbd2e; }
+        .btn-maximize { background-color: #27c93f; }
+        .window-title {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 14px;
+            color: #6272a4;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .editor-content {
+            flex: 1;
+            display: flex;
+            padding: 24px;
+            font-size: 24px;
+            line-height: 1.5;
+            overflow: hidden;
+        }
+        .line-numbers {
+            text-align: right;
+            padding-right: 20px;
+            color: #6272a4;
+            user-select: none;
+            border-right: 1px solid rgba(98, 114, 164, 0.2);
+            margin-right: 20px;
+            font-family: monospace;
+        }
+        .code-area {
+            flex: 1;
+            margin: 0;
+            padding: 0;
+            color: #f8f8f2;
+            white-space: pre;
+            font-family: monospace;
+            overflow: hidden;
+        }
+        .hljs {
+            background: transparent !important;
+            padding: 0 !important;
+        }
+        .caret {
+            color: #50fa7b;
+            font-weight: bold;
+            text-shadow: 0 0 8px rgba(80, 250, 123, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <!-- Background media (optional) or dark fallback -->
+        <div class="background-container" id="bg-container"></div>
+        
+        <!-- IDE Editor Window Mockup -->
+        <div class="editor-wrapper">
+            <div class="titlebar">
+                <div class="window-buttons">
+                    <div class="win-btn btn-close"></div>
+                    <div class="win-btn btn-minimize"></div>
+                    <div class="win-btn btn-maximize"></div>
+                </div>
+                <div class="window-title" id="file-title">main.go</div>
+            </div>
+            <div class="editor-content">
+                <div class="line-numbers" id="line-nums" style="display: none;"></div>
+                <pre class="code-area"><code id="code-display" class="language-plaintext"></code></pre>
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <!-- Load HighlightJS -->
+    <script src="/templates/common/highlight.min.js"></script>
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let codeText = "";
+        let language = "go";
+        let showLineNums = true;
+        
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            const bgContainer = document.getElementById('bg-container');
+            bgContainer.innerHTML = '';
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            codeText = params.code_text || "";
+            language = params.language || "go";
+            showLineNums = params.show_line_numbers !== undefined ? params.show_line_numbers : true;
+            
+            // File Title tab
+            const fileTitle = document.getElementById('file-title');
+            if (language === 'go') fileTitle.innerText = 'main.go';
+            else if (language === 'javascript' || language === 'js') fileTitle.innerText = 'index.js';
+            else if (language === 'json') fileTitle.innerText = 'config.json';
+            else if (language === 'python' || language === 'py') fileTitle.innerText = 'app.py';
+            else fileTitle.innerText = 'code.' + (language || 'txt');
+
+            // Line numbers display settings
+            const lineNumsEl = document.getElementById('line-nums');
+            if (showLineNums) {
+                lineNumsEl.style.display = 'block';
+            } else {
+                lineNumsEl.style.display = 'none';
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Handle background media seeking
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            } else if (!isVideo && mediaElement) {
+                const scale = 1.0 + 0.05 * progress;
+                mediaElement.style.transform = `scale(${scale})`;
+            }
+
+            // Calculate character count based on progress
+            // Spend the first 85% of time typing, then 15% paused so the user reads it.
+            const typingEndTime = durationSec * 0.85;
+            let typeProgress = Math.min(timeInSeconds / typingEndTime, 1.0);
+            if (typeProgress < 0) typeProgress = 0;
+
+            const visibleLen = Math.floor(typeProgress * codeText.length);
+            const partialCode = codeText.substring(0, visibleLen);
+
+            // Highlight partial code
+            let highlighted = "";
+            if (partialCode.length > 0) {
+                try {
+                    highlighted = hljs.highlight(partialCode, {language: language}).value;
+                } catch (e) {
+                    highlighted = partialCode.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                }
+            }
+
+            // Blink caret deterministically (4 blinks per second)
+            const blink = Math.floor(timeInSeconds * 4) % 2 === 0;
+            const caret = blink ? '<span class="caret">|</span>' : '<span class="caret" style="opacity: 0">|</span>';
+
+            const displayEl = document.getElementById('code-display');
+            displayEl.innerHTML = highlighted + caret;
+
+            // Update line numbers based on the partial code line count
+            if (showLineNums) {
+                const lines = partialCode.split('\n');
+                let lineNumsHTML = '';
+                for (let i = 1; i <= Math.max(lines.length, 1); i++) {
+                    lineNumsHTML += `<div>${i}</div>`;
+                }
+                document.getElementById('line-nums').innerHTML = lineNumsHTML;
+            }
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .background-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 1;
+            overflow: hidden;
+            background: linear-gradient(135deg, #090d16 0%, #030712 100%);
+        }
+        .background-container img, .background-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.2;
+            filter: blur(6px);
+        }
+        .matrix-title {
+            position: absolute;
+            top: 10%;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 56px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            z-index: 5;
+            color: #ffffff;
+            text-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        .matrix-container {
+            position: absolute;
+            top: 25%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 1500px;
+            height: 580px;
+            display: flex;
+            gap: 60px;
+            z-index: 5;
+        }
+        .matrix-column {
+            flex: 1;
+            background: rgba(17, 24, 39, 0.65);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            transition: all 0.2s linear;
+        }
+        .column-header {
+            font-size: 38px;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 30px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        .points-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .point-item {
+            font-size: 26px;
+            line-height: 1.4;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            opacity: 0; /* will animate */
+        }
+        .badge-marker {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        /* Style variation if winner */
+        .winner-glow {
+            border: 2px solid #00ffcc !important;
+            box-shadow: 0 0 50px rgba(0, 255, 204, 0.25), inset 0 0 20px rgba(0, 255, 204, 0.05);
+            background: rgba(17, 24, 39, 0.8) !important;
+        }
+        .loser-dim {
+            opacity: 0.45;
+        }
+        .winner-badge {
+            background-color: rgba(0, 255, 204, 0.15);
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+        }
+        .loser-badge {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <!-- Background -->
+        <div class="background-container" id="bg-container"></div>
+        
+        <h1 id="matrix-title" class="matrix-title"></h1>
+        
+        <div class="matrix-container">
+            <!-- Column A -->
+            <div id="col-a" class="matrix-column">
+                <div id="col-a-header" class="column-header" style="color: #ef4444;"></div>
+                <ul id="col-a-points" class="points-list"></ul>
+            </div>
+            
+            <!-- Column B -->
+            <div id="col-b" class="matrix-column">
+                <div id="col-b-header" class="column-header" style="color: #00ffcc;"></div>
+                <ul id="col-b-points" class="points-list"></ul>
+            </div>
+        </div>
+
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let highlightWinner = "";
+        let pointsLenA = 0;
+        let pointsLenB = 0;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            const bgContainer = document.getElementById('bg-container');
+            bgContainer.innerHTML = '';
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.autoplay = true;
+                    mediaElement.loop = true;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    bgContainer.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            document.getElementById('matrix-title').innerText = params.title || "";
+            
+            highlightWinner = params.highlight_winner || "";
+
+            // Populate Column A
+            const colA = params.column_a || {};
+            document.getElementById('col-a-header').innerText = colA.header || "";
+            const listA = document.getElementById('col-a-points');
+            listA.innerHTML = "";
+            const pointsA = colA.points || [];
+            pointsLenA = pointsA.length;
+            pointsA.forEach((pt, index) => {
+                const li = document.createElement('li');
+                li.className = 'point-item';
+                li.id = `col-a-pt-${index}`;
+                // Marker: Red cross by default or generic indicator
+                li.innerHTML = `<span class="badge-marker loser-badge">✕</span> <span>${pt}</span>`;
+                listA.appendChild(li);
+            });
+
+            // Populate Column B
+            const colB = params.column_b || {};
+            document.getElementById('col-b-header').innerText = colB.header || "";
+            const listB = document.getElementById('col-b-points');
+            listB.innerHTML = "";
+            const pointsB = colB.points || [];
+            pointsLenB = pointsB.length;
+            pointsB.forEach((pt, index) => {
+                const li = document.createElement('li');
+                li.className = 'point-item';
+                li.id = `col-b-pt-${index}`;
+                // Marker: Green check
+                li.innerHTML = `<span class="badge-marker winner-badge">✓</span> <span>${pt}</span>`;
+                listB.appendChild(li);
+            });
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            const durationSec = totalDuration || 5.0;
+            const progress = Math.min(timeInSeconds / durationSec, 1.0);
+
+            // Handle background media seeking
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            } else if (!isVideo && mediaElement) {
+                const scale = 1.0 + 0.05 * progress;
+                mediaElement.style.transform = `scale(${scale})`;
+            }
+
+            // 1. Title entry: 0.0 -> 0.2
+            const titleProgress = Math.min(progress / 0.2, 1.0);
+            const titleEl = document.getElementById('matrix-title');
+            titleEl.style.opacity = titleProgress;
+            titleEl.style.transform = `translateY(${-20 * (1.0 - titleProgress)}px)`;
+
+            // 2. Columns entry
+            // Column A slide from left: 0.1 -> 0.35
+            const progressA = Math.max(0, Math.min((progress - 0.1) / 0.25, 1.0));
+            const colA = document.getElementById('col-a');
+            colA.style.opacity = progressA;
+            colA.style.transform = `translateX(${-50 * (1.0 - progressA)}px)`;
+
+            // Column B slide from right: 0.2 -> 0.45
+            const progressB = Math.max(0, Math.min((progress - 0.2) / 0.25, 1.0));
+            const colB = document.getElementById('col-b');
+            colB.style.opacity = progressB;
+            colB.style.transform = `translateX(${50 * (1.0 - progressB)}px)`;
+
+            // 3. Sequential points fade-in: 0.35 -> 0.75
+            // Interpolate points entrance
+            const pointsStart = 0.35;
+            const pointsDuration = 0.4;
+            
+            // Total items to reveal (A & B side by side)
+            const maxPoints = Math.max(pointsLenA, pointsLenB);
+            for (let i = 0; i < maxPoints; i++) {
+                // Determine phase for this row
+                const rowStart = pointsStart + (i / maxPoints) * pointsDuration;
+                const rowProgress = Math.max(0, Math.min((progress - rowStart) / 0.12, 1.0));
+                
+                if (i < pointsLenA) {
+                    const ptA = document.getElementById(`col-a-pt-${i}`);
+                    ptA.style.opacity = rowProgress;
+                    ptA.style.transform = `translateX(${10 * (1.0 - rowProgress)}px)`;
+                }
+                
+                if (i < pointsLenB) {
+                    const ptB = document.getElementById(`col-b-pt-${i}`);
+                    ptB.style.opacity = rowProgress;
+                    ptB.style.transform = `translateX(${10 * (1.0 - rowProgress)}px)`;
+                }
+            }
+
+            // 4. Winner Highlight Transition: 0.75 -> 0.95
+            const winnerProgress = Math.max(0, Math.min((progress - 0.75) / 0.2, 1.0));
+            
+            if (highlightWinner === "column_a") {
+                if (winnerProgress > 0) {
+                    colA.classList.add("winner-glow");
+                    colB.classList.add("loser-dim");
+                    colB.style.opacity = 1.0 - (0.55 * winnerProgress); // dims down to 0.45
+                } else {
+                    colA.classList.remove("winner-glow");
+                    colB.classList.remove("loser-dim");
+                    colB.style.opacity = 1.0;
+                }
+            } else if (highlightWinner === "column_b") {
+                if (winnerProgress > 0) {
+                    colB.classList.add("winner-glow");
+                    colA.classList.add("loser-dim");
+                    colA.style.opacity = 1.0 - (0.55 * winnerProgress); // dims down to 0.45
+                } else {
+                    colB.classList.remove("winner-glow");
+                    colA.classList.remove("loser-dim");
+                    colA.style.opacity = 1.0;
+                }
+            }
+        };
+    </script>
+</body>
+</html>

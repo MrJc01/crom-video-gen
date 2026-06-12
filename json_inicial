@@ -219,6 +219,128 @@
             {
                 "id": 10,
                 "template": {
+                    "id": "code_snippet_typing",
+                    "parametros": {
+                        "language": "go",
+                        "theme": "dracula",
+                        "typing_speed": "fast",
+                        "show_line_numbers": true,
+                        "code_text": "func startRosagent() {\n  fmt.Println(\"Crom Net Ativa\")\n}"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "video",
+                        "caminho": "assets/video/cli_interface_demo.mp4"
+                    }
+                },
+                "narracao": {
+                    "texto": "Aqui temos uma demonstração prática de código digitado em tempo real, ilustrando como iniciar o Rosagent na rede.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 11,
+                "template": {
+                    "id": "concept_definition",
+                    "parametros": {
+                        "term": "Soberania Digital",
+                        "phonetic_spelling": "/so.be.ɾa'ni.a/",
+                        "definition": "Controle absoluto sobre os próprios dados e infraestrutura, sem dependência de big techs.",
+                        "accent_color": "#ffaa00"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/modulo_hardware.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "A Soberania Digital representa o controle absoluto e independente sobre todos os dados e a infraestrutura de rede.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 12,
+                "template": {
+                    "id": "comparison_matrix",
+                    "parametros": {
+                        "title": "Eficiência de Rede",
+                        "column_a": {
+                            "header": "Padrão Mercado",
+                            "points": ["Alta Latência", "Servidor Central", "Tráfego Pesado"]
+                        },
+                        "column_b": {
+                            "header": "Ecossistema Crom",
+                            "points": ["Baixa Latência", "P2P Direto", "99.4% de Redução"]
+                        },
+                        "highlight_winner": "column_b"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/diagrama_fluxo.png"
+                    }
+                },
+                "narracao": {
+                    "texto": "Ao comparar a eficiência, o ecossistema Crom supera o padrão de mercado através da rede descentralizada ponto a ponto.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 13,
+                "template": {
+                    "id": "q_and_a_flashcard",
+                    "parametros": {
+                        "question": "Como funciona o consenso offline?",
+                        "answer": "Através da verificação estática local antes da propagação.",
+                        "flip_animation": true,
+                        "timer_bar": 3.0
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/capa_projeto.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "Uma pergunta comum é sobre o consenso offline: ele realiza verificação local estática de integridade antes da sincronização.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 14,
+                "template": {
+                    "id": "roadmap_timeline",
+                    "parametros": {
+                        "orientation": "horizontal",
+                        "current_step_index": 1,
+                        "milestones": [
+                            "Ingestão",
+                            "Processamento Edge",
+                            "Sincronização P2P"
+                        ],
+                        "completed_color": "#00ffcc",
+                        "pending_color": "#555555"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/diagrama_fluxo.png"
+                    }
+                },
+                "narracao": {
+                    "texto": "Nosso roadmap detalha três etapas claras: Ingestão de pacotes, Processamento na borda e Sincronização P2P final.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 15,
+                "template": {
                     "id": "outro_credits",
                     "parametros": {
                         "fade_out_duration": 3.0,
