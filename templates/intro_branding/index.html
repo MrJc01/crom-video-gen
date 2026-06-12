@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            background-color: black;
+            z-index: 2;
+        }
+        .branding-title {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 64px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            text-align: center;
+            z-index: 5;
+            color: #ffffff;
+            text-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            width: 1600px;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container">
+            <img id="bg-media" src="" style="transform-origin: center center;">
+        </div>
+        <div id="overlay-bg" class="overlay"></div>
+        <div id="branding-title" class="branding-title"></div>
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let durationSec = 1.0;
+        let zoomSpeedMax = 1.1;
+        let bgImage = null;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set background media
+            bgImage = document.getElementById('bg-media');
+            if (cena.ativos && cena.ativos.media0) {
+                bgImage.src = cena.ativos.media0.caminho;
+            }
+
+            // Get parameters
+            const params = cena.template.parametros || {};
+            zoomSpeedMax = params.zoom_speed !== undefined ? params.zoom_speed : 1.1;
+            const overlayOpacity = params.overlay_opacity !== undefined ? params.overlay_opacity : 0.4;
+            
+            document.getElementById('overlay-bg').style.opacity = overlayOpacity;
+
+            // Set branding title (text0)
+            const titleEl = document.getElementById('branding-title');
+            if (params.text0) {
+                titleEl.innerText = params.text0;
+                titleEl.style.display = 'block';
+            } else {
+                titleEl.style.display = 'none';
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            durationSec = totalDuration || 5.0;
+            if (bgImage) {
+                // Calculate zoom scale linearly over time
+                const progress = timeInSeconds / durationSec;
+                const currentScale = 1.0 + (zoomSpeedMax - 1.0) * Math.min(progress, 1.0);
+                bgImage.style.transform = `scale(${currentScale})`;
+            }
+        };
+    </script>
+</body>
+</html>

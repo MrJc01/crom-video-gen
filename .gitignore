@@ -1,0 +1,20 @@
+# Binaries
+/crom-video-gen
+/crom-video-gen.exe
+/bin/ffmpeg
+/bin/ffprobe
+/bin/qt-faststart
+
+# Output media
+/*.mp4
+/*.mp3
+/*.wav
+
+# OS/Editor configs
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+*.test
+/temp/

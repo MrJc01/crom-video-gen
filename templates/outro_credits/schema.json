@@ -1,0 +1,10 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "fade_out_duration": { "obrigatorio": false, "tipo": "number" },
+    "show_qr_code": { "obrigatorio": false, "tipo": "boolean" },
+    "text0": { "obrigatorio": false, "tipo": "string" }
+  }
+}

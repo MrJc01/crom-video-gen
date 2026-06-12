@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let playbackSpeed = 1.5;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Get speed parameter
+            const params = cena.template.parametros || {};
+            playbackSpeed = params.playback_speed !== undefined ? params.playback_speed : 1.5;
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                // Seek to scaled time based on speed
+                mediaElement.currentTime = timeInSeconds * playbackSpeed;
+            }
+        };
+    </script>
+</body>
+</html>

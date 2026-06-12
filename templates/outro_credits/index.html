@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .qr-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 240px;
+            height: 240px;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            color: black;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 20px;
+            font-weight: bold;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            z-index: 10;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="qr-container" id="qr-box" style="display: none;">
+            QR CODE
+        </div>
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+        let fadeOutDuration = 3.0;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Show QR code if configured
+            const params = cena.template.parametros || {};
+            const showQR = params.show_qr_code !== undefined ? params.show_qr_code : false;
+            const qrBox = document.getElementById('qr-box');
+            qrBox.style.display = showQR ? 'flex' : 'none';
+            if (showQR) {
+                qrBox.innerText = params.text0 || "QR CODE";
+            }
+
+            // Get fade duration
+            fadeOutDuration = params.fade_out_duration !== undefined ? params.fade_out_duration : 3.0;
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            }
+
+            // Calculate fade out to black
+            const durationSec = totalDuration || 5.0;
+            const fadeStart = durationSec - fadeOutDuration;
+            if (timeInSeconds >= fadeStart && fadeOutDuration > 0) {
+                const progress = (timeInSeconds - fadeStart) / fadeOutDuration;
+                document.body.style.opacity = Math.max(0, 1.0 - progress);
+            } else {
+                document.body.style.opacity = 1.0;
+            }
+        };
+    </script>
+</body>
+</html>

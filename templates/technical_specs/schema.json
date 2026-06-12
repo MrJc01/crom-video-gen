@@ -1,0 +1,10 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "highlight_color": { "obrigatorio": false, "tipo": "string" },
+    "list_style": { "obrigatorio": false, "tipo": "string" },
+    "specs": { "obrigatorio": false, "tipo": "array" }
+  }
+}

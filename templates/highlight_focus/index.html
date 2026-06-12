@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .vignette-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            z-index: 5;
+            pointer-events: none;
+            /* Radial gradient spotlight */
+            background: radial-gradient(circle at 50% 50%, transparent 20%, rgba(0, 0, 0, 0.85) 65%);
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="media-container" id="container">
+            <!-- Media will be dynamically injected here -->
+        </div>
+        <div class="vignette-overlay" id="vignette"></div>
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaElement = null;
+        let isVideo = false;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            // Set vignette coordinates based on focus_area
+            const params = cena.template.parametros || {};
+            const focusArea = params.focus_area || "center";
+            
+            let posX = "50%";
+            let posY = "50%";
+            switch (focusArea) {
+                case "top_right":
+                    posX = "80%";
+                    posY = "20%";
+                    break;
+                case "top_left":
+                    posX = "20%";
+                    posY = "20%";
+                    break;
+                case "bottom_right":
+                    posX = "80%";
+                    posY = "80%";
+                    break;
+                case "bottom_left":
+                    posX = "20%";
+                    posY = "80%";
+                    break;
+            }
+
+            const vignette = document.getElementById('vignette');
+            vignette.style.background = `radial-gradient(circle at ${posX} ${posY}, transparent 20%, rgba(0, 0, 0, 0.85) 65%)`;
+
+            // Set media
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                if (media0.tipo === 'video') {
+                    mediaElement = document.createElement('video');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.muted = true;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = true;
+                } else {
+                    mediaElement = document.createElement('img');
+                    mediaElement.src = media0.caminho;
+                    mediaElement.className = 'main-media';
+                    container.appendChild(mediaElement);
+                    isVideo = false;
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (isVideo && mediaElement) {
+                mediaElement.currentTime = timeInSeconds;
+            }
+        };
+    </script>
+</body>
+</html>

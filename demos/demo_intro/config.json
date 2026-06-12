@@ -1,0 +1,45 @@
+{
+  "projeto": {
+    "titulo": "Demo - Intro Branding",
+    "configuracoes_globais": {
+      "resolucao": "1920x1080",
+      "fps": 30,
+      "formato_saida": "mp4",
+      "audio": {
+        "sample_rate": 48000,
+        "bitrate": "192k",
+        "canais": 2,
+        "codec": "aac",
+        "normalizar_volume": true
+      }
+    },
+    "trilha_sonora": {
+      "arquivo": "assets/audio/ambient_techno.mp3",
+      "volume": 0.1,
+      "loop": true
+    },
+    "cenas": [
+      {
+        "id": 1,
+        "template": {
+          "id": "intro_branding",
+          "parametros": {
+            "zoom_speed": 1.15,
+            "overlay_opacity": 0.5,
+            "text0": "Apresentacao Crom"
+          }
+        },
+        "ativos": {
+          "media0": {
+            "tipo": "imagem",
+            "caminho": "demos/demo_intro/imagem.jpg"
+          }
+        },
+        "narracao": {
+          "texto": "Esta e uma demonstracao do template de introducao.",
+          "voz": "pt-BR-FranciscaNeural"
+        }
+      }
+    ]
+  }
+}

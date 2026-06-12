@@ -1,0 +1,9 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "blur_amount": { "obrigatorio": false, "tipo": "number" },
+    "color_grading": { "obrigatorio": false, "tipo": "string" }
+  }
+}

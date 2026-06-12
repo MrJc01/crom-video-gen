@@ -1,0 +1,12 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] },
+    "media1": { "obrigatorio": false, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "divider_pos": { "obrigatorio": false, "tipo": "number" },
+    "border_width": { "obrigatorio": false, "tipo": "number" },
+    "text0": { "obrigatorio": false, "tipo": "string" },
+    "text1": { "obrigatorio": false, "tipo": "string" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["video"] }
+  },
+  "parametros": {
+    "playback_speed": { "obrigatorio": false, "tipo": "number" },
+    "motion_blur": { "obrigatorio": false, "tipo": "boolean" }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "projeto": {
+    "titulo": "Demo - Split Screen",
+    "configuracoes_globais": {
+      "resolucao": "1920x1080",
+      "fps": 30,
+      "formato_saida": "mp4",
+      "audio": {
+        "sample_rate": 48000,
+        "bitrate": "192k",
+        "canais": 2,
+        "codec": "aac",
+        "normalizar_volume": true
+      }
+    },
+    "trilha_sonora": {
+      "arquivo": "assets/audio/ambient_techno.mp3",
+      "volume": 0.1,
+      "loop": true
+    },
+    "cenas": [
+      {
+        "id": 1,
+        "template": {
+          "id": "split_screen_demo",
+          "parametros": {
+            "divider_pos": 0.5,
+            "border_width": 2,
+            "text0": "Entrada CLI",
+            "text1": "Saida Processada"
+          }
+        },
+        "ativos": {
+          "media0": {
+            "tipo": "video",
+            "caminho": "demos/demo_split_screen/video.mp4"
+          },
+          "media1": {
+            "tipo": "video",
+            "caminho": "demos/demo_split_screen/video.mp4"
+          }
+        },
+        "narracao": {
+          "texto": "Demonstracao de tela dividida comparando o mesmo video lado a lado.",
+          "voz": "pt-BR-AntonioNeural"
+        }
+      }
+    ]
+  }
+}

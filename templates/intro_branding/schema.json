@@ -1,0 +1,10 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "zoom_speed": { "obrigatorio": false, "tipo": "number" },
+    "overlay_opacity": { "obrigatorio": false, "tipo": "number" },
+    "text0": { "obrigatorio": false, "tipo": "string" }
+  }
+}

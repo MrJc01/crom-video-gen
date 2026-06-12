@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/templates/common/base.css">
+    <style>
+        .split-container {
+            display: flex;
+            width: 1920px;
+            height: 1080px;
+            overflow: hidden;
+        }
+        .split-pane {
+            width: 50%;
+            height: 1080px;
+            position: relative;
+            overflow: hidden;
+        }
+        .split-media {
+            position: absolute;
+            top: 0;
+            width: 1920px;
+            height: 1080px;
+            object-fit: contain;
+            background: black;
+        }
+        .left-pane .split-media {
+            left: 0;
+        }
+        .right-pane .split-media {
+            right: 0;
+            filter: contrast(1.3) saturate(1.5);
+        }
+        /* Vertical divider line */
+        .divider {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 1080px;
+            background-color: rgba(255, 255, 255, 0.4);
+            z-index: 10;
+        }
+        .pane-label {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            z-index: 15;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 8px 16px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport">
+        <div class="split-container">
+            <div class="split-pane left-pane" id="left-pane">
+                <!-- Left media here -->
+            </div>
+            <div class="divider"></div>
+            <div class="split-pane right-pane" id="right-pane">
+                <!-- Right media here -->
+            </div>
+        </div>
+        <div class="subtitles-container">
+            <div id="subtitles" class="subtitles-text"></div>
+        </div>
+    </div>
+
+    <script>
+        let leftMedia = null;
+        let rightMedia = null;
+        let leftIsVideo = false;
+        let rightIsVideo = false;
+
+        window.setupTemplate = function(cenaJson) {
+            const cena = JSON.parse(cenaJson);
+            
+            // Set subtitles
+            document.getElementById('subtitles').innerText = cena.narracao.texto;
+            
+            const leftPane = document.getElementById('left-pane');
+            const rightPane = document.getElementById('right-pane');
+            leftPane.innerHTML = '';
+            rightPane.innerHTML = '';
+
+            const params = cena.template.parametros || {};
+
+            if (cena.ativos && cena.ativos.media0) {
+                const media0 = cena.ativos.media0;
+                const media1 = cena.ativos.media1 || media0; // Fallback to media0 if media1 is not provided
+
+                // Setup left pane
+                if (media0.tipo === 'video') {
+                    leftMedia = document.createElement('video');
+                    leftMedia.src = media0.caminho;
+                    leftMedia.muted = true;
+                    leftMedia.className = 'split-media';
+                    leftPane.appendChild(leftMedia);
+                    leftIsVideo = true;
+                } else {
+                    leftMedia = document.createElement('img');
+                    leftMedia.src = media0.caminho;
+                    leftMedia.className = 'split-media';
+                    leftPane.appendChild(leftMedia);
+                    leftIsVideo = false;
+                }
+
+                // Setup right pane
+                if (media1.tipo === 'video') {
+                    rightMedia = document.createElement('video');
+                    rightMedia.src = media1.caminho;
+                    rightMedia.muted = true;
+                    rightMedia.className = 'split-media';
+                    rightPane.appendChild(rightMedia);
+                    rightIsVideo = true;
+                } else {
+                    rightMedia = document.createElement('img');
+                    rightMedia.src = media1.caminho;
+                    rightMedia.className = 'split-media';
+                    rightPane.appendChild(rightMedia);
+                    rightIsVideo = false;
+                }
+
+                // Setup labels if text0/text1 are provided
+                if (params.text0) {
+                    const labelLeft = document.createElement('div');
+                    labelLeft.className = 'pane-label';
+                    labelLeft.innerText = params.text0;
+                    leftPane.appendChild(labelLeft);
+                }
+                if (params.text1) {
+                    const labelRight = document.createElement('div');
+                    labelRight.className = 'pane-label';
+                    labelRight.innerText = params.text1;
+                    rightPane.appendChild(labelRight);
+                }
+            }
+        };
+
+        window.seekTo = function(timeInSeconds, totalDuration) {
+            if (leftIsVideo && leftMedia) {
+                leftMedia.currentTime = timeInSeconds;
+            }
+            if (rightIsVideo && rightMedia) {
+                rightMedia.currentTime = timeInSeconds;
+            }
+        };
+    </script>
+</body>
+</html>

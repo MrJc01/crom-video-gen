@@ -1,0 +1,9 @@
+{
+  "ativos": {
+    "media0": { "obrigatorio": true, "tipos_permitidos": ["imagem", "video"] }
+  },
+  "parametros": {
+    "focus_area": { "obrigatorio": false, "tipo": "string" },
+    "darken_bg": { "obrigatorio": false, "tipo": "boolean" }
+  }
+}

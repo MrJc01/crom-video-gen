@@ -1,0 +1,179 @@
+{
+    "projeto": {
+        "titulo": "Documentação Automatizada - Ecossistema Crom",
+        "configuracoes_globais": {
+            "resolucao": "1920x1080",
+            "fps": 30,
+            "formato_saida": "mp4",
+            "audio": {
+                "sample_rate": 48000,
+                "bitrate": "320k",
+                "canais": 2,
+                "codec": "aac",
+                "normalizar_volume": true
+            }
+        },
+        "trilha_sonora": {
+            "arquivo": "assets/audio/ambient_techno.mp3",
+            "volume": 0.12,
+            "loop": true
+        },
+        "cenas": [
+            {
+                "id": 1,
+                "template": {
+                    "id": "intro_branding",
+                    "parametros": {
+                        "zoom_speed": 1.1,
+                        "overlay_opacity": 0.4,
+                        "text0": "Ecossistema Crom"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/capa_projeto.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "Bem-vindo à apresentação técnica do Ecossistema Crom. Vamos explorar nossa arquitetura de rede.",
+                    "voz": "pt-BR-FranciscaNeural",
+                    "rate": "+5%",
+                    "pitch": "-2Hz"
+                }
+            },
+            {
+                "id": 2,
+                "template": {
+                    "id": "cinematic_video",
+                    "parametros": {
+                        "blur_amount": 0,
+                        "color_grading": "cool_cyan"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "video",
+                        "caminho": "assets/video/datacenter_drone.mp4"
+                    }
+                },
+                "narracao": {
+                    "texto": "Nossa infraestrutura está distribuída globalmente, garantindo baixa latência para todos os agentes da rede.",
+                    "voz": "pt-BR-AntonioNeural",
+                    "rate": "+10%",
+                    "pitch": "+0Hz"
+                }
+            },
+            {
+                "id": 3,
+                "template": {
+                    "id": "technical_specs",
+                    "parametros": {
+                        "list_style": "bullets",
+                        "highlight_color": "#ffaa00",
+                        "specs": [
+                            "Processamento Distribuido",
+                            "Baixa Latencia (Crom Net)",
+                            "Criptografia de Hardware"
+                        ]
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/diagrama_fluxo.png"
+                    }
+                },
+                "narracao": {
+                    "texto": "O fluxo de dados é processado em três camadas principais: ingestão, validação e consenso distribuído.",
+                    "voz": "pt-BR-FranciscaNeural",
+                    "rate": "+0%",
+                    "volume": "-10%"
+                }
+            },
+            {
+                "id": 4,
+                "template": {
+                    "id": "split_screen_demo",
+                    "parametros": {
+                        "divider_pos": 0.5,
+                        "border_width": 2,
+                        "text0": "Original",
+                        "text1": "Processado"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "video",
+                        "caminho": "assets/video/cli_interface_demo.mp4"
+                    }
+                },
+                "narracao": {
+                    "texto": "Observe a interface de linha de comando operando em tempo real com nossos Rosagents.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 5,
+                "template": {
+                    "id": "highlight_focus",
+                    "parametros": {
+                        "focus_area": "top_right",
+                        "darken_bg": true
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/modulo_hardware.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "Este componente é responsável pela criptografia em nível de hardware, assegurando a soberania digital do usuário.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 6,
+                "template": {
+                    "id": "action_video_fast",
+                    "parametros": {
+                        "playback_speed": 1.5,
+                        "motion_blur": true
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "video",
+                        "caminho": "assets/video/network_propagation.mp4"
+                    }
+                },
+                "narracao": {
+                    "texto": "A propagação de pacotes ocorre em milissegundos através do protocolo proprietário de alta performance.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            },
+            {
+                "id": 7,
+                "template": {
+                    "id": "outro_credits",
+                    "parametros": {
+                        "fade_out_duration": 3.0,
+                        "show_qr_code": true,
+                        "text0": "ACESSE CROM.ME"
+                    }
+                },
+                "ativos": {
+                    "media0": {
+                        "tipo": "imagem",
+                        "caminho": "assets/img/final_branding.jpg"
+                    }
+                },
+                "narracao": {
+                    "texto": "Concluímos assim nossa visão geral. Para aprofundar-se no código, acesse nossa documentação oficial.",
+                    "voz": "pt_br_male_premium_01"
+                }
+            }
+        ]
+    }
+}
