@@ -89,7 +89,7 @@ func TestGenerateVideo_E2E(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Executa a pipeline de geração completa
-	err = GenerateVideo(context.Background(), logger, configPath, outputPath, "mock", false)
+	err = GenerateVideo(context.Background(), logger, configPath, outputPath, "mock", false, 0)
 	if err != nil {
 		t.Fatalf("Erro ao executar pipeline E2E de geração de vídeo: %v", err)
 	}

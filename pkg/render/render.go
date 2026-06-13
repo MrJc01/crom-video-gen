@@ -257,13 +257,43 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		return fmt.Errorf("falha ao iniciar FFmpeg: %w (stderr: %s)", err, stderr.String())
 	}
 
+	// Channel para processamento concorrente do stdin do FFmpeg
+	// Limitamos o buffer a 8 frames para evitar uso excessivo de RAM (8 * ~500KB = ~4MB por cena)
+	frameChan := make(chan []byte, 8)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer stdin.Close()
+		for img := range frameChan {
+			if _, err := stdin.Write(img); err != nil {
+				errChan <- err
+				return
+			}
+		}
+		errChan <- nil
+	}()
+
 	// Loop frame-a-frame de captura otimizado
 	totalFrames := int(duration * float64(global.FPS))
 	if totalFrames < 1 {
 		totalFrames = 1
 	}
 
+	var renderErr error
 	for f := 0; f < totalFrames; f++ {
+		// Verifica antes de prosseguir se a goroutine de escrita encontrou algum erro
+		select {
+		case writeErr := <-errChan:
+			if writeErr != nil {
+				renderErr = fmt.Errorf("falha precoce na escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
+				break
+			}
+		default:
+		}
+		if renderErr != nil {
+			break
+		}
+
 		timeSeconds := float64(f) / float64(global.FPS)
 
 		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek (agora usando Promise)
@@ -305,34 +335,52 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		// Executa o script de seek usando Evaluate, que por padrão aguarda a Promise finalizar
 		err = chromedp.Run(sceneCtx, chromedp.Evaluate(seekScript, nil))
 		if err != nil {
-			_ = stdin.Close()
-			return fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
+			renderErr = fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
+			break
 		}
 
-		// Captura o frame como screenshot JPEG
+		// Captura o frame como screenshot JPEG com qualidade 90
 		var imageBuf []byte
 		err = chromedp.Run(sceneCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 			var captureErr error
 			imageBuf, captureErr = page.CaptureScreenshot().
 				WithFormat(page.CaptureScreenshotFormatJpeg).
-				WithQuality(95).
+				WithQuality(90).
 				Do(ctx)
 			return captureErr
 		}))
 		if err != nil {
-			_ = stdin.Close()
-			return fmt.Errorf("falha ao capturar screenshot no frame %d: %w", f, err)
+			renderErr = fmt.Errorf("falha ao capturar screenshot no frame %d: %w", f, err)
+			break
 		}
 
-		// Escreve os bytes da imagem no stdin do FFmpeg
-		if _, err := stdin.Write(imageBuf); err != nil {
-			_ = stdin.Close()
-			return fmt.Errorf("falha ao escrever frame %d no pipe do FFmpeg: %w (stderr: %s)", f, err, stderr.String())
+		// Envia os bytes para serem escritos no stdin concorrentemente
+		select {
+		case frameChan <- imageBuf:
+		case writeErr := <-errChan:
+			if writeErr != nil {
+				renderErr = fmt.Errorf("falha ao enviar frame %d para gravação no FFmpeg: %w (stderr: %s)", f, writeErr, stderr.String())
+				break
+			}
+		}
+		if renderErr != nil {
+			break
 		}
 	}
 
-	// Fecha o pipe de entrada para indicar fim da transmissão de frames
-	_ = stdin.Close()
+	// Fecha o canal de frames para sinalizar término da gravação
+	close(frameChan)
+
+	// Aguarda o término da goroutine escritora se não houve erros prévios
+	if renderErr == nil {
+		if writeErr := <-errChan; writeErr != nil {
+			renderErr = fmt.Errorf("falha ao finalizar escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
+		}
+	}
+
+	if renderErr != nil {
+		return renderErr
+	}
 
 	// Aguarda o término do processo FFmpeg
 	if err := cmd.Wait(); err != nil {

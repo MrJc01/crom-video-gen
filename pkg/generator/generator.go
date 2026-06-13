@@ -22,7 +22,7 @@ import (
 )
 
 // GenerateVideo é o orquestrador principal que executa a validação e renderização completa do vídeo
-func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, outputPath string, ttsProvider string, validateOnly bool) error {
+func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, outputPath string, ttsProvider string, validateOnly bool, concurrency int) error {
 	logger.Info("Iniciando processo de geração de vídeo", "config", configPath, "output", outputPath)
 
 	// Resolve o outputPath para absoluto para garantir que a escrita final funcione em qualquer subpasta
@@ -100,7 +100,16 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	localAddr := listener.Addr().String()
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir(root)))
+	fileServer := http.FileServer(http.Dir(root))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		ext := strings.ToLower(filepath.Ext(r.URL.Path))
+		if ext == ".ttf" || ext == ".css" || ext == ".js" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".mp3" || ext == ".mp4" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=60")
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 
 	httpServer := &http.Server{
 		Handler: mux,
@@ -226,12 +235,15 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	logger.Info("Todos os áudios TTS foram gerados com sucesso")
 
 	// Limita concorrência de renderização
-	maxWorkers := runtime.NumCPU() / 2
-	if maxWorkers < 1 {
-		maxWorkers = 1
-	}
-	if maxWorkers > 4 {
-		maxWorkers = 4 // limite prudente de RAM/Chrome tabs
+	maxWorkers := concurrency
+	if maxWorkers <= 0 {
+		maxWorkers = runtime.NumCPU() / 2
+		if maxWorkers < 1 {
+			maxWorkers = 1
+		}
+		if maxWorkers > 4 {
+			maxWorkers = 4 // limite prudente de RAM/Chrome tabs
+		}
 	}
 	logger.Info("Iniciando renderização paralela de cenas", "workers", maxWorkers)
 

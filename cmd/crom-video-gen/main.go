@@ -20,6 +20,7 @@ func main() {
 	ttsProvider := flag.String("tts-provider", "edge-tts", "Provedor de narração TTS: 'mock' ou 'edge-tts'")
 	validateOnly := flag.Bool("validate-only", false, "Apenas valida a estrutura do JSON e a presença física dos ativos, sem renderizar")
 	verbose := flag.Bool("verbose", false, "Ativa modo log verboso (debug)")
+	concurrency := flag.Int("concurrency", 0, "Número de workers paralelos para renderização (0 para automático)")
 
 	flag.Parse()
 
@@ -54,7 +55,7 @@ func main() {
 	}()
 
 	// Executa a pipeline
-	err := generator.GenerateVideo(ctx, logger, *configPath, *outputPath, *ttsProvider, *validateOnly)
+	err := generator.GenerateVideo(ctx, logger, *configPath, *outputPath, *ttsProvider, *validateOnly, *concurrency)
 	if err != nil {
 		logger.Error("Execução finalizada com erro", "erro", err.Error())
 

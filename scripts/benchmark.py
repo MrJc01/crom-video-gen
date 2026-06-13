@@ -24,14 +24,18 @@ def main():
     run_command(["bash", "scripts/generate_mock_assets.sh"])
     print("Ativos mock preparados.\n")
 
-    print("=== 3. Executando Geração e Coletando Métricas ===")
+    concurrency = "0"
+    if len(sys.argv) > 1:
+        concurrency = sys.argv[1]
+
     cmd = [
         "./crom-video-gen",
         "--config", "json_inicial",
         "--output", "output_benchmark.mp4",
         "--tts-provider", "edge-tts",
         "--log-format", "json",
-        "--verbose"
+        "--verbose",
+        "--concurrency", concurrency
     ]
     
     start_real = time.time()
