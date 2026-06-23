@@ -56,7 +56,7 @@ go build -o crom-video-gen cmd/crom-video-gen/main.go
 
 ## 📁 Documentação Detalhada
 Para guias completos sobre o funcionamento do ecossistema, consulte a pasta `/documentacao/`:
-* **[Arquitetura do Sistema](file:///home/j/Documentos/GitHub/crom-test1/documentacao/arquitetura.md)**
-* **[Templates e Variáveis Dinâmicas](file:///home/j/Documentos/GitHub/crom-test1/documentacao/templates.md)**
-* **[Sintetizador TTS](file:///home/j/Documentos/GitHub/crom-test1/documentacao/tts.md)**
-* **[Esquema de Configuração JSON](file:///home/j/Documentos/GitHub/crom-test1/documentacao/configuracao.md)**
+* **[Arquitetura do Sistema](file:///home/j/Documentos/GitHub/crom-video-gens/crom-video-gen/documentacao/arquitetura.md)**
+* **[Templates e Variáveis Dinâmicas](file:///home/j/Documentos/GitHub/crom-video-gens/crom-video-gen/documentacao/templates.md)**
+* **[Sintetizador TTS](file:///home/j/Documentos/GitHub/crom-video-gens/crom-video-gen/documentacao/tts.md)**
+* **[Esquema de Configuração JSON](file:///home/j/Documentos/GitHub/crom-video-gens/crom-video-gen/documentacao/configuracao.md)**
