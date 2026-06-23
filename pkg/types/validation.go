@@ -91,9 +91,6 @@ func (c *ConfigInput) Validate() error {
 
 	// Validação de Trilha Sonora
 	t := p.TrilhaSonora
-	if strings.TrimSpace(t.Arquivo) == "" {
-		return fmt.Errorf("trilha_sonora.arquivo não pode ser vazio")
-	}
 	if t.Volume < 0.0 || t.Volume > 1.0 {
 		return fmt.Errorf("trilha_sonora.volume deve estar entre 0.0 e 1.0 (recebido: %f)", t.Volume)
 	}

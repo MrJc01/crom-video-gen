@@ -135,7 +135,7 @@
                     <div class="card-tag tag-q">PERGUNTA</div>
                     <div id="question-text" class="card-text"></div>
                     <div style="width: 100%;">
-                        <div class="footer-logo">CONSENSO DISTRIBUÍDO CROM</div>
+                        <div class="footer-logo" id="footer-logo-front">CONSENSO DISTRIBUÍDO CROM</div>
                         <div class="timer-bar-container">
                             <div id="timer-bar" class="timer-bar"></div>
                         </div>
@@ -146,7 +146,7 @@
                 <div class="card-face card-back" id="card-back">
                     <div class="card-tag tag-a">RESPOSTA</div>
                     <div id="answer-text" class="card-text text-answer"></div>
-                    <div class="footer-logo">VALIDAÇÃO CONFIRMADA</div>
+                    <div class="footer-logo" id="footer-logo-back">VALIDAÇÃO CONFIRMADA</div>
                 </div>
             </div>
         </div>
@@ -193,6 +193,9 @@
             document.getElementById('question-text').innerText = params.question || "";
             document.getElementById('answer-text').innerText = params.answer || "";
             
+            document.getElementById('footer-logo-front').innerText = params.footer_front || "CONSENSO DISTRIBUÍDO CROM";
+            document.getElementById('footer-logo-back').innerText = params.footer_back || "VALIDAÇÃO CONFIRMADA";
+
             flipAnimation = params.flip_animation !== undefined ? params.flip_animation : true;
         };
 

@@ -42,8 +42,10 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	am := assets.NewAssetManager(root)
 
 	// Valida trilha sonora
-	if err := am.ValidateFile(config.Projeto.TrilhaSonora.Arquivo, []string{".mp3", ".wav"}); err != nil {
-		return fmt.Errorf("trilha sonora inválida: %w", err)
+	if config.Projeto.TrilhaSonora.Arquivo != "" {
+		if err := am.ValidateFile(config.Projeto.TrilhaSonora.Arquivo, []string{".mp3", ".wav"}); err != nil {
+			return fmt.Errorf("trilha sonora inválida: %w", err)
+		}
 	}
 
 	// Valida cada cena e seus ativos, convertendo-os para absoluto
@@ -293,9 +295,13 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 
 	// 6. Concatena os clipes de vídeo das cenas e adiciona a trilha sonora
 	logger.Info("Concatenando cenas e adicionando trilha sonora final...")
-	soundtrackPath, err := am.SanitizePath(config.Projeto.TrilhaSonora.Arquivo)
-	if err != nil {
-		return fmt.Errorf("falha ao processar caminho da trilha sonora: %w", err)
+	var soundtrackPath string
+	if config.Projeto.TrilhaSonora.Arquivo != "" {
+		var err error
+		soundtrackPath, err = am.SanitizePath(config.Projeto.TrilhaSonora.Arquivo)
+		if err != nil {
+			return fmt.Errorf("falha ao processar caminho da trilha sonora: %w", err)
+		}
 	}
 
 	err = render.ConcatScenes(

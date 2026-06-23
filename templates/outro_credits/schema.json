@@ -5,6 +5,9 @@
   "parametros": {
     "fade_out_duration": { "obrigatorio": false, "tipo": "number" },
     "show_qr_code": { "obrigatorio": false, "tipo": "boolean" },
-    "text0": { "obrigatorio": false, "tipo": "string" }
+    "text0": { "obrigatorio": false, "tipo": "string" },
+    "cta_title": { "obrigatorio": false, "tipo": "string" },
+    "github_handle": { "obrigatorio": false, "tipo": "string" },
+    "discord_handle": { "obrigatorio": false, "tipo": "string" }
   }
 }

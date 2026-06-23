@@ -158,9 +158,11 @@
             // Setup title & list colors
             const titleElement = document.getElementById('specs-title');
             titleElement.style.color = highlightColor;
+            titleElement.innerText = params.specs_title || "Especificacoes";
             
             const tagElement = document.getElementById('specs-tag');
             tagElement.style.color = highlightColor;
+            tagElement.innerText = params.specs_tag || "SYSTEM PARAMETERS";
 
             // Setup specs items
             const specsUl = document.getElementById('specs-ul');

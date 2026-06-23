@@ -5,6 +5,7 @@
   "parametros": {
     "zoom_speed": { "obrigatorio": false, "tipo": "number" },
     "overlay_opacity": { "obrigatorio": false, "tipo": "number" },
-    "text0": { "obrigatorio": false, "tipo": "string" }
+    "text0": { "obrigatorio": false, "tipo": "string" },
+    "text1": { "obrigatorio": false, "tipo": "string" }
   }
 }

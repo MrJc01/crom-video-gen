@@ -1,6 +1,11 @@
 # Binaries
 /crom-video-gen
 /crom-video-gen.exe
+/crom_bin
+/imagem0.png
+/imagens
+/test_export.json
+/test_real_gen.json
 /bin/ffmpeg
 /bin/ffprobe
 /bin/qt-faststart

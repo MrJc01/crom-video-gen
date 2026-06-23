@@ -6,6 +6,6 @@
     "metric_value": { "obrigatorio": true, "tipo": "string" },
     "metric_label": { "obrigatorio": true, "tipo": "string" },
     "progress_percentage": { "obrigatorio": false, "tipo": "number" },
-    "accent_color": { "obrigatorio": false, "tipo": "string" }
+    "accent_color": { "obrigatorio": false, "tipo": "color" }
   }
 }

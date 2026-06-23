@@ -6,6 +6,8 @@
     "question": { "obrigatorio": true, "tipo": "string" },
     "answer": { "obrigatorio": true, "tipo": "string" },
     "flip_animation": { "obrigatorio": false, "tipo": "boolean" },
-    "timer_bar": { "obrigatorio": false, "tipo": "number" }
+    "timer_bar": { "obrigatorio": false, "tipo": "number" },
+    "footer_front": { "obrigatorio": false, "tipo": "string" },
+    "footer_back": { "obrigatorio": false, "tipo": "string" }
   }
 }

@@ -6,7 +6,7 @@
     "orientation": { "obrigatorio": false, "tipo": "string" },
     "current_step_index": { "obrigatorio": true, "tipo": "number" },
     "milestones": { "obrigatorio": true, "tipo": "array" },
-    "completed_color": { "obrigatorio": false, "tipo": "string" },
-    "pending_color": { "obrigatorio": false, "tipo": "string" }
+    "completed_color": { "obrigatorio": false, "tipo": "color" },
+    "pending_color": { "obrigatorio": false, "tipo": "color" }
   }
 }

@@ -5,6 +5,6 @@
   "parametros": {
     "quote_text": { "obrigatorio": true, "tipo": "string" },
     "quote_author": { "obrigatorio": false, "tipo": "string" },
-    "accent_color": { "obrigatorio": false, "tipo": "string" }
+    "accent_color": { "obrigatorio": false, "tipo": "color" }
   }
 }
