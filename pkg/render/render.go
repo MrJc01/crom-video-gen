@@ -346,16 +346,19 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 			seekScript = fmt.Sprintf(`window.seekTo(%f, %f);`, timeSeconds, duration)
 		}
 
-		// Executa o script de seek usando Evaluate. Para Promise, aguarda finalizar.
-		err = chromedp.Run(sceneCtx, chromedp.Evaluate(seekScript, nil))
+		// Executa o script de seek usando Evaluate com timeout de 15 segundos para evitar hangs permanentes
+		seekCtx, seekCancel := context.WithTimeout(sceneCtx, 15*time.Second)
+		err = chromedp.Run(seekCtx, chromedp.Evaluate(seekScript, nil))
+		seekCancel()
 		if err != nil {
-			renderErr = fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
+			renderErr = fmt.Errorf("falha ao disparar seekTo no frame %d (timeout ou erro): %w", f, err)
 			break
 		}
 
-		// Captura o frame como screenshot JPEG com qualidade 85 (ótimo compromisso qualidade/velocidade)
+		// Captura o frame como screenshot JPEG com qualidade 85 e timeout de 15 segundos
 		var imageBuf []byte
-		err = chromedp.Run(sceneCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		captureCtx, captureCancel := context.WithTimeout(sceneCtx, 15*time.Second)
+		err = chromedp.Run(captureCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 			var captureErr error
 			imageBuf, captureErr = page.CaptureScreenshot().
 				WithFormat(page.CaptureScreenshotFormatJpeg).
@@ -363,8 +366,9 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 				Do(ctx)
 			return captureErr
 		}))
+		captureCancel()
 		if err != nil {
-			renderErr = fmt.Errorf("falha ao capturar screenshot no frame %d: %w", f, err)
+			renderErr = fmt.Errorf("falha ao capturar screenshot no frame %d (timeout ou erro): %w", f, err)
 			break
 		}
 

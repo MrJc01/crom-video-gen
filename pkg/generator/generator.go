@@ -131,6 +131,7 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 
 	// 5. Inicializa uma única instância do Chrome compartilhada
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
 		chromedp.NoSandbox, // Compatibilidade com Linux e ambientes dockerizados
 		chromedp.Flag("hide-scrollbars", true),
 		chromedp.WindowSize(1920, 1080),
