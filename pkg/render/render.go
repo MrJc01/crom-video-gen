@@ -139,10 +139,57 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 	// Aguarda o carregamento completo de todos os ativos (imagens e vídeos) no DOM
 	waitAssetsScript := `
 		(function() {
+			// Sobrescreve a propriedade 'currentTime' de HTMLMediaElement para tratar vídeos em loop.
+			// Ao buscar (seek) um tempo maior que a duração de um vídeo marcado como loop,
+			// calculamos o modulo (currentTime % duration) para simular o loop de forma fluida.
+			if (!window._currentTimePatched) {
+				window._currentTimePatched = true;
+				try {
+					const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+					if (descriptor && descriptor.set) {
+						const originalSet = descriptor.set;
+						const originalGet = descriptor.get;
+						Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+							configurable: true,
+							enumerable: true,
+							get: function() {
+								return originalGet.call(this);
+							},
+							set: function(val) {
+								let target = val;
+								if (this.loop && this.duration && this.duration > 0) {
+									target = val % this.duration;
+								}
+								originalSet.call(this, target);
+							}
+						});
+					}
+				} catch (e) {
+					console.error("Falha ao interceptar currentTime:", e);
+				}
+
+				// Impede que os vídeos iniciem reprodução automática para evitar conflito com seeks manuais
+				try {
+					HTMLMediaElement.prototype.play = function() {
+						return Promise.resolve();
+					};
+				} catch (e) {
+					console.error("Falha ao desativar play():", e);
+				}
+			}
+
 			window.setupFinished = false;
 			const images = Array.from(document.querySelectorAll('img'));
 			const videos = Array.from(document.querySelectorAll('video'));
 			
+			// Pausa todos os vídeos já criados e desabilita autoplay
+			videos.forEach(v => {
+				try {
+					v.pause();
+					v.autoplay = false;
+				} catch (e) {}
+			});
+
 			let pending = images.length + videos.length;
 			const checkReady = () => {
 				if (pending <= 0) {
@@ -282,108 +329,128 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		errChan <- nil
 	}()
 
-	// Loop frame-a-frame de captura otimizado
 	totalFrames := int(duration * float64(global.FPS))
 	if totalFrames < 1 {
 		totalFrames = 1
 	}
 
+	// Loop frame-a-frame de captura otimizado rodando dentro de um único chromedp.Run
 	var renderErr error
-	for f := 0; f < totalFrames; f++ {
-		// Verifica antes de prosseguir se a goroutine de escrita encontrou algum erro
-		select {
-		case writeErr := <-errChan:
-			if writeErr != nil {
-				renderErr = fmt.Errorf("falha precoce na escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
-				break
+	var cmdWaited bool
+
+	defer func() {
+		if !cmdWaited && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	// Define um timeout geral para a cena (2 segundos por frame + 30 segundos de margem de segurança)
+	sceneTimeout := time.Duration(totalFrames)*2*time.Second + 30*time.Second
+	runCtx, runCancel := context.WithTimeout(sceneCtx, sceneTimeout)
+	defer runCancel()
+
+	err = chromedp.Run(runCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		for f := 0; f < totalFrames; f++ {
+			// Verifica se a goroutine de escrita encontrou algum erro
+			select {
+			case writeErr := <-errChan:
+				if writeErr != nil {
+					return fmt.Errorf("falha precoce na escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
+				}
+			default:
 			}
-		default:
-		}
-		if renderErr != nil {
-			break
-		}
 
-		timeSeconds := float64(f) / float64(global.FPS)
+			timeSeconds := float64(f) / float64(global.FPS)
 
-		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek
-		var seekScript string
-		if hasVideos {
-			seekScript = fmt.Sprintf(`
-				new Promise((resolve) => {
-					const videos = Array.from(document.querySelectorAll('video'));
-					let pending = 0;
-					let resolved = false;
-					
-					const checkResolve = () => {
-						if (pending === 0 && !resolved) {
-							resolved = true;
-							resolve();
-						}
-					};
-
-					videos.forEach(v => {
-						pending++;
-						const onSeeked = () => {
-							pending--;
-							checkResolve();
-						};
-						v.addEventListener('seeked', onSeeked, { once: true });
-						// Timeout backup caso não dispare
-						setTimeout(() => {
-							if (v.seeking === false) {
-								v.removeEventListener('seeked', onSeeked);
-								pending--;
-								checkResolve();
+			// Script JavaScript otimizado para buscar o frame
+			var seekScript string
+			if hasVideos {
+				seekScript = fmt.Sprintf(`
+					new Promise((resolve) => {
+						const videos = Array.from(document.querySelectorAll('video'));
+						
+						// Filtra apenas vídeos que realmente precisam de seek e estão prontos.
+						// Trata loops de forma correta (calculando o modulo do tempo alvo)
+						const activeVideos = videos.filter(v => {
+							let targetTime = %f;
+							if (v.loop && v.duration && v.duration > 0) {
+								targetTime = targetTime %% v.duration;
+							} else {
+								targetTime = Math.min(targetTime, v.duration || Infinity);
 							}
-						}, 250);
+							return Math.abs(v.currentTime - targetTime) > 0.001;
+						});
+
+						if (activeVideos.length === 0) {
+							window.seekTo(%f, %f);
+							resolve();
+							return;
+						}
+
+						let resolved = false;
+						const done = () => {
+							if (!resolved) {
+								resolved = true;
+								resolve();
+							}
+						};
+
+						// Timeout absoluto curto (100ms) para evitar travar o renderizador sob alta carga de CPU
+						const timer = setTimeout(done, 100);
+
+						let pending = 0;
+						activeVideos.forEach(v => {
+							pending++;
+							const onSeeked = () => {
+								pending--;
+								if (pending === 0) {
+									clearTimeout(timer);
+									done();
+								}
+							};
+							v.addEventListener('seeked', onSeeked, { once: true });
+						});
+
+						window.seekTo(%f, %f);
 					});
+				`, timeSeconds, timeSeconds, duration, timeSeconds, duration)
+			} else {
+				seekScript = fmt.Sprintf(`window.seekTo(%f, %f);`, timeSeconds, duration)
+			}
 
-					window.seekTo(%f, %f);
-					checkResolve(); // Para o caso de não haver vídeos
-				});
-			`, timeSeconds, duration)
-		} else {
-			seekScript = fmt.Sprintf(`window.seekTo(%f, %f);`, timeSeconds, duration)
-		}
+			// Executa seek e captura
+			var evalErr error
+			evalErr = chromedp.Evaluate(seekScript, nil).Do(ctx)
+			if evalErr != nil {
+				return fmt.Errorf("falha ao realizar seek no frame %d: %w", f, evalErr)
+			}
 
-		// Executa o script de seek usando Evaluate com timeout de 15 segundos para evitar hangs permanentes
-		seekCtx, seekCancel := context.WithTimeout(sceneCtx, 15*time.Second)
-		err = chromedp.Run(seekCtx, chromedp.Evaluate(seekScript, nil))
-		seekCancel()
-		if err != nil {
-			renderErr = fmt.Errorf("falha ao disparar seekTo no frame %d (timeout ou erro): %w", f, err)
-			break
-		}
-
-		// Captura o frame como screenshot JPEG com qualidade 85 e timeout de 15 segundos
-		var imageBuf []byte
-		captureCtx, captureCancel := context.WithTimeout(sceneCtx, 15*time.Second)
-		err = chromedp.Run(captureCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-			var captureErr error
-			imageBuf, captureErr = page.CaptureScreenshot().
+			var imageBuf []byte
+			imageBuf, evalErr = page.CaptureScreenshot().
 				WithFormat(page.CaptureScreenshotFormatJpeg).
-				WithQuality(85).
+				WithQuality(75).
 				Do(ctx)
-			return captureErr
-		}))
-		captureCancel()
-		if err != nil {
-			renderErr = fmt.Errorf("falha ao capturar screenshot no frame %d (timeout ou erro): %w", f, err)
-			break
-		}
+			if evalErr != nil {
+				return fmt.Errorf("falha ao capturar screenshot no frame %d: %w", f, evalErr)
+			}
 
-		// Envia os bytes para serem escritos no stdin concorrentemente
-		select {
-		case frameChan <- imageBuf:
-		case writeErr := <-errChan:
-			if writeErr != nil {
-				renderErr = fmt.Errorf("falha ao enviar frame %d para gravação no FFmpeg: %w (stderr: %s)", f, writeErr, stderr.String())
-				break
+			// Envia os bytes para serem escritos no stdin concorrentemente
+			select {
+			case frameChan <- imageBuf:
+			case writeErr := <-errChan:
+				if writeErr != nil {
+					return fmt.Errorf("falha ao enviar frame %d para gravação no FFmpeg: %w (stderr: %s)", f, writeErr, stderr.String())
+				}
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
-		if renderErr != nil {
-			break
-		}
+		return nil
+	}))
+
+	if err != nil {
+		renderErr = err
 	}
 
 	// Fecha o canal de frames para sinalizar término da gravação
@@ -401,6 +468,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 	}
 
 	// Aguarda o término do processo FFmpeg
+	cmdWaited = true
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("FFmpeg falhou ao concluir renderização da cena %d: %w (stderr: %s)", cena.ID, err, stderr.String())
 	}

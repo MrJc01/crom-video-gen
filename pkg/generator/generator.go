@@ -1,11 +1,16 @@
 package generator
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -80,6 +85,11 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 		return nil
 	}
 
+	// 2.5. Otimiza os ativos de vídeo (keyint=1, scale, sem áudio) para busca instantânea no Chrome
+	if err := OptimizeVideoAssets(ctx, logger, config, root); err != nil {
+		return fmt.Errorf("falha ao otimizar ativos de vídeo: %w", err)
+	}
+
 	// 3. Inicializa o diretório temporário para renderização
 	tempDir, err := am.CreateTempDir()
 	if err != nil {
@@ -130,9 +140,11 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	logger.Debug("Servidor HTTP local compartilhado ativo", "addr", localAddr)
 
 	// 5. Inicializa uma única instância do Chrome compartilhada
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.DisableGPU,
-		chromedp.NoSandbox, // Compatibilidade com Linux e ambientes dockerizados
+	opts := []chromedp.ExecAllocatorOption{
+		chromedp.NoFirstRun,
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.Flag("headless", "new"), // Usa o novo modo headless do Chrome (suporta aceleração por GPU)
+		chromedp.NoSandbox,                // Compatibilidade com Linux e ambientes dockerizados
 		chromedp.Flag("hide-scrollbars", true),
 		chromedp.WindowSize(1920, 1080),
 		// Performance/Headless flags:
@@ -151,7 +163,7 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 		chromedp.Flag("disable-sync", true),
 		chromedp.Flag("metrics-recording-only", true),
 		chromedp.Flag("safebrowsing-disable-auto-update", true),
-	)
+	}
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
 	defer allocCancel()
@@ -319,5 +331,109 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 	}
 
 	logger.Info("Processo de geração de vídeo finalizado com sucesso!", "arquivo_gerado", outputPath)
+	return nil
+}
+
+// OptimizeVideoAssets pré-processa os vídeos de fundo de todas as cenas.
+// Ele redimensiona para a resolução do projeto, stripa o áudio, e força keyframe interval = 1.
+// O arquivo resultante é salvo em assets/video/.cache/ para reuso rápido.
+func OptimizeVideoAssets(ctx context.Context, logger *slog.Logger, config *types.ConfigInput, projectRoot string) error {
+	ffmpegPath := execs.ResolveFFmpegPath()
+	w, h, err := config.Projeto.ConfiguracoesGlobais.GetResolutionWidthAndHeight()
+	if err != nil {
+		return fmt.Errorf("resolução global inválida: %w", err)
+	}
+
+	cacheDir := filepath.Join(projectRoot, "assets", "video", ".cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("falha ao criar pasta de cache de vídeos: %w", err)
+	}
+
+	// Mapeia vídeos processados para evitar transcodificar o mesmo vídeo duas vezes no mesmo projeto
+	processed := make(map[string]string)
+
+	for i, cena := range config.Projeto.Cenas {
+		for key, ativo := range cena.Ativos {
+			if ativo.Tipo != "video" {
+				continue
+			}
+
+			originalPath := ativo.Caminho
+			if cachedPath, ok := processed[originalPath]; ok {
+				config.Projeto.Cenas[i].Ativos[key] = types.Ativo{
+					Tipo:    "video",
+					Caminho: cachedPath,
+				}
+				continue
+			}
+
+			info, err := os.Stat(originalPath)
+			if err != nil {
+				return fmt.Errorf("falha ao ler estatísticas do vídeo %s: %w", originalPath, err)
+			}
+
+			// Gera uma hash única com base nas propriedades do vídeo original para invalidar cache
+			hashInput := fmt.Sprintf("%s_%d_%d_%dx%d", originalPath, info.Size(), info.ModTime().UnixNano(), w, h)
+			hashBytes := sha256.Sum256([]byte(hashInput))
+			hashStr := hex.EncodeToString(hashBytes[:8]) // 16 caracteres de hash
+
+			baseName := filepath.Base(originalPath)
+			ext := filepath.Ext(originalPath)
+			cleanName := strings.TrimSuffix(baseName, ext)
+
+			// Nome seguro do cache
+			cacheFileName := fmt.Sprintf("%s_opt_%s.mp4", cleanName, hashStr)
+			cacheFilePath := filepath.Join(cacheDir, cacheFileName)
+
+			// Verifica se já existe no cache do disco
+			if _, err := os.Stat(cacheFilePath); err == nil {
+				logger.Info("Usando vídeo otimizado do cache", "original", baseName, "cache", cacheFileName)
+				processed[originalPath] = cacheFilePath
+				config.Projeto.Cenas[i].Ativos[key] = types.Ativo{
+					Tipo:    "video",
+					Caminho: cacheFilePath,
+				}
+				continue
+			}
+
+			// Transcoda o vídeo usando FFmpeg:
+			// - keyint=1:min-keyint=1: garante que todo frame é I-frame (keyframe)
+			// - scale=W:H: força redimensionamento do canvas
+			// - an: remove áudio para economizar processamento do browser
+			logger.Info("Transcodificando vídeo em background para keyframe-only (isso rodará apenas uma vez por vídeo)", "original", baseName, "saida", cacheFileName)
+
+			// Filtro de escala mantendo aspect ratio ou forçando dimensões
+			// Para simplificar e garantir 100% de preenchimento, fazemos scale=W:H
+			scaleFilter := fmt.Sprintf("scale=%d:%d", w, h)
+
+			args := []string{
+				"-y",
+				"-i", originalPath,
+				"-vf", scaleFilter,
+				"-c:v", "libx264",
+				"-x264opts", "keyint=1:min-keyint=1",
+				"-preset", "ultrafast",
+				"-crf", "18",
+				"-an",
+				cacheFilePath,
+			}
+
+			cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+
+			startTime := time.Now()
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("FFmpeg falhou ao transcodificar %s: %w (stderr: %s)", originalPath, err, stderr.String())
+			}
+			logger.Info("Vídeo transcodificado com sucesso", "tempo", time.Since(startTime), "arquivo", cacheFileName)
+
+			processed[originalPath] = cacheFilePath
+			config.Projeto.Cenas[i].Ativos[key] = types.Ativo{
+				Tipo:    "video",
+				Caminho: cacheFilePath,
+			}
+		}
+	}
 	return nil
 }

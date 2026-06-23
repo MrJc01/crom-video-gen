@@ -23,3 +23,4 @@
 *.log
 *.test
 /temp/
+/assets/video/.cache/
