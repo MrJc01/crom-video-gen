@@ -86,6 +86,15 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		}
 	}
 
+	// Verifica se a cena contém ativos de vídeo para otimização do seek
+	hasVideos := false
+	for _, ativo := range cena.Ativos {
+		if ativo.Tipo == "video" {
+			hasVideos = true
+			break
+		}
+	}
+
 	// Converte a struct da cena para JSON e codifica em Base64
 	cenaBytes, err := json.Marshal(browserCena)
 	if err != nil {
@@ -296,56 +305,61 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 
 		timeSeconds := float64(f) / float64(global.FPS)
 
-		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek (agora usando Promise)
-		seekScript := fmt.Sprintf(`
-			new Promise((resolve) => {
-				const videos = Array.from(document.querySelectorAll('video'));
-				let pending = 0;
-				let resolved = false;
-				
-				const checkResolve = () => {
-					if (pending === 0 && !resolved) {
-						resolved = true;
-						resolve();
-					}
-				};
-
-				videos.forEach(v => {
-					pending++;
-					const onSeeked = () => {
-						pending--;
-						checkResolve();
+		// Script JavaScript para buscar o frame e sinalizar quando terminar o seek
+		var seekScript string
+		if hasVideos {
+			seekScript = fmt.Sprintf(`
+				new Promise((resolve) => {
+					const videos = Array.from(document.querySelectorAll('video'));
+					let pending = 0;
+					let resolved = false;
+					
+					const checkResolve = () => {
+						if (pending === 0 && !resolved) {
+							resolved = true;
+							resolve();
+						}
 					};
-					v.addEventListener('seeked', onSeeked, { once: true });
-					// Timeout backup caso não dispare
-					setTimeout(() => {
-						if (v.seeking === false) {
-							v.removeEventListener('seeked', onSeeked);
+
+					videos.forEach(v => {
+						pending++;
+						const onSeeked = () => {
 							pending--;
 							checkResolve();
-						}
-					}, 250);
+						};
+						v.addEventListener('seeked', onSeeked, { once: true });
+						// Timeout backup caso não dispare
+						setTimeout(() => {
+							if (v.seeking === false) {
+								v.removeEventListener('seeked', onSeeked);
+								pending--;
+								checkResolve();
+							}
+						}, 250);
+					});
+
+					window.seekTo(%f, %f);
+					checkResolve(); // Para o caso de não haver vídeos
 				});
+			`, timeSeconds, duration)
+		} else {
+			seekScript = fmt.Sprintf(`window.seekTo(%f, %f);`, timeSeconds, duration)
+		}
 
-				window.seekTo(%f, %f);
-				checkResolve(); // Para o caso de não haver vídeos
-			});
-		`, timeSeconds, duration)
-
-		// Executa o script de seek usando Evaluate, que por padrão aguarda a Promise finalizar
+		// Executa o script de seek usando Evaluate. Para Promise, aguarda finalizar.
 		err = chromedp.Run(sceneCtx, chromedp.Evaluate(seekScript, nil))
 		if err != nil {
 			renderErr = fmt.Errorf("falha ao disparar seekTo no frame %d: %w", f, err)
 			break
 		}
 
-		// Captura o frame como screenshot JPEG com qualidade 90
+		// Captura o frame como screenshot JPEG com qualidade 85 (ótimo compromisso qualidade/velocidade)
 		var imageBuf []byte
 		err = chromedp.Run(sceneCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 			var captureErr error
 			imageBuf, captureErr = page.CaptureScreenshot().
 				WithFormat(page.CaptureScreenshotFormatJpeg).
-				WithQuality(90).
+				WithQuality(85).
 				Do(ctx)
 			return captureErr
 		}))
