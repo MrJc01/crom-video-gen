@@ -1,16 +1,15 @@
 package generator
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,6 +21,11 @@ import (
 	"crom-video-gen/pkg/render"
 	"crom-video-gen/pkg/tts"
 	"crom-video-gen/pkg/types"
+
+	"cromedia/core"
+	"cromedia/core/demux"
+	coreImage "cromedia/core/image"
+	"cromedia/core/mux"
 
 	"github.com/chromedp/chromedp"
 )
@@ -338,7 +342,6 @@ func GenerateVideo(ctx context.Context, logger *slog.Logger, configPath string, 
 // Ele redimensiona para a resolução do projeto, stripa o áudio, e força keyframe interval = 1.
 // O arquivo resultante é salvo em assets/video/.cache/ para reuso rápido.
 func OptimizeVideoAssets(ctx context.Context, logger *slog.Logger, config *types.ConfigInput, projectRoot string) error {
-	ffmpegPath := execs.ResolveFFmpegPath()
 	w, h, err := config.Projeto.ConfiguracoesGlobais.GetResolutionWidthAndHeight()
 	if err != nil {
 		return fmt.Errorf("resolução global inválida: %w", err)
@@ -396,35 +399,16 @@ func OptimizeVideoAssets(ctx context.Context, logger *slog.Logger, config *types
 				continue
 			}
 
-			// Transcoda o vídeo usando FFmpeg:
-			// - keyint=1:min-keyint=1: garante que todo frame é I-frame (keyframe)
+			// Transcoda o vídeo usando CroMedia nativo:
+			// - keyint=1: garante que todo frame é I-frame (keyframe)
 			// - scale=W:H: força redimensionamento do canvas
 			// - an: remove áudio para economizar processamento do browser
 			logger.Info("Transcodificando vídeo em background para keyframe-only (isso rodará apenas uma vez por vídeo)", "original", baseName, "saida", cacheFileName)
 
-			// Filtro de escala mantendo aspect ratio ou forçando dimensões
-			// Para simplificar e garantir 100% de preenchimento, fazemos scale=W:H
-			scaleFilter := fmt.Sprintf("scale=%d:%d", w, h)
-
-			args := []string{
-				"-y",
-				"-i", originalPath,
-				"-vf", scaleFilter,
-				"-c:v", "libx264",
-				"-x264opts", "keyint=1:min-keyint=1",
-				"-preset", "ultrafast",
-				"-crf", "18",
-				"-an",
-				cacheFilePath,
-			}
-
-			cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-
 			startTime := time.Now()
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("FFmpeg falhou ao transcodificar %s: %w (stderr: %s)", originalPath, err, stderr.String())
+			err = OptimizeVideoAssetNative(originalPath, cacheFilePath, w, h)
+			if err != nil {
+				return fmt.Errorf("CroMedia falhou ao transcodificar %s: %w", originalPath, err)
 			}
 			logger.Info("Vídeo transcodificado com sucesso", "tempo", time.Since(startTime), "arquivo", cacheFileName)
 
@@ -436,4 +420,283 @@ func OptimizeVideoAssets(ctx context.Context, logger *slog.Logger, config *types
 		}
 	}
 	return nil
+}
+
+// OptimizeVideoAssetNative abre um MP4, decodifica via H.264, redimensiona
+// e codifica forçando keyint=1 antes de muxar o resultado de volta para MP4.
+func OptimizeVideoAssetNative(inputPath, outputPath string, targetW, targetH int) error {
+	inFile, err := os.Open(inputPath)
+	if err != nil {
+		return fmt.Errorf("falha ao abrir arquivo de entrada: %w", err)
+	}
+	defer inFile.Close()
+
+	demuxer := demux.NewMP4Demuxer(inFile)
+	tracks, err := demuxer.Probe()
+	if err != nil {
+		return fmt.Errorf("falha ao ler metadados do arquivo: %w", err)
+	}
+
+	var videoTrack *core.Track
+	var audioTrack *core.Track
+	videoTrackIndex := -1
+
+	for i := range tracks {
+		if tracks[i].Type == core.TrackTypeVideo {
+			videoTrack = &tracks[i]
+			videoTrackIndex = i
+		} else if tracks[i].Type == core.TrackTypeAudio {
+			audioTrack = &tracks[i]
+		}
+	}
+
+	if videoTrack == nil {
+		return fmt.Errorf("nenhuma trilha de vídeo encontrada no arquivo")
+	}
+
+	fps := 30
+	if len(videoTrack.Samples) > 0 && videoTrack.Samples[0].Duration > 0 {
+		fps = int(float64(videoTrack.Timescale) / float64(videoTrack.Samples[0].Duration))
+	}
+	if fps <= 0 {
+		fps = 30
+	}
+
+	decoder := &core.SimH264Decoder{}
+	defer decoder.Close()
+
+	encoder := &core.SimH264Encoder{
+		KeyintMax: 1, // Força todos-keyframes (keyint=1)
+	}
+
+	tmpVideoFile, err := os.CreateTemp("", "optimize_video_*.tmp")
+	if err != nil {
+		return fmt.Errorf("falha ao criar arquivo temporário de vídeo: %w", err)
+	}
+	defer func() {
+		tmpVideoFile.Close()
+		os.Remove(tmpVideoFile.Name())
+	}()
+
+	var videoSamples []core.Sample
+	var videoPTS int64 = 0
+	videoTimescale := uint32(90000)
+	if videoTrack.Timescale > 0 {
+		videoTimescale = videoTrack.Timescale
+	}
+	videoFrameDuration := int64(videoTimescale) / int64(fps)
+	if videoFrameDuration <= 0 {
+		videoFrameDuration = 3000
+	}
+
+	var sps []byte
+	var pps []byte
+
+	writeVideoPacket := func(pkt *core.Packet) error {
+		if pkt == nil {
+			return nil
+		}
+		offset, err := tmpVideoFile.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		_, err = tmpVideoFile.Write(pkt.Data)
+		if err != nil {
+			return err
+		}
+		videoSamples = append(videoSamples, core.Sample{
+			ID:         len(videoSamples) + 1,
+			IsKeyframe: pkt.IsKeyframe,
+			Offset:     offset,
+			Size:       int64(len(pkt.Data)),
+			Time:       videoPTS,
+			Duration:   videoFrameDuration,
+		})
+
+		if len(sps) == 0 || len(pps) == 0 {
+			nals := core.ParseAnnexBNalUnits(pkt.Data)
+			for _, nal := range nals {
+				if len(nal) > 0 {
+					nalType := nal[0] & 0x1F
+					if nalType == 7 {
+						sps = append([]byte{}, nal...)
+					} else if nalType == 8 {
+						pps = append([]byte{}, nal...)
+					}
+				}
+			}
+		}
+		videoPTS += videoFrameDuration
+		return nil
+	}
+
+	scaler := &core.ScaleFilter{
+		TargetW:  targetW,
+		TargetH:  targetH,
+		Bilinear: true,
+	}
+
+	for {
+		pkt, err := demuxer.ReadPacket()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("falha ao ler pacote: %w", err)
+		}
+
+		if pkt.StreamIndex == videoTrackIndex {
+			frame, err := decoder.Decode(pkt)
+			core.GlobalPut(pkt.Data)
+			if err != nil {
+				return fmt.Errorf("falha ao decodificar frame: %w", err)
+			}
+			if frame == nil {
+				continue
+			}
+
+			var rgbaData []byte
+			if frame.Format == core.PixelFormatYUV420P {
+				rgbaData = coreImage.ConvertYUV420pToRGBA(frame.Width, frame.Height, frame.Data)
+				core.GlobalPut(frame.Data)
+			} else if frame.Format == core.PixelFormatRGBA {
+				rgbaData = frame.Data
+			} else {
+				return fmt.Errorf("formato de vídeo não suportado: %s", frame.Format)
+			}
+
+			rgbaFrame := &core.VideoFrame{
+				Width:  frame.Width,
+				Height: frame.Height,
+				Format: core.PixelFormatRGBA,
+				Data:   rgbaData,
+			}
+
+			scaledFrame, err := scaler.Process(rgbaFrame)
+			core.GlobalPut(rgbaFrame.Data)
+			if err != nil {
+				return fmt.Errorf("falha ao redimensionar frame: %w", err)
+			}
+
+			outPkt, err := encoder.Encode(scaledFrame)
+			if err != nil {
+				return fmt.Errorf("falha ao codificar frame: %w", err)
+			}
+			if outPkt != nil {
+				if err := writeVideoPacket(outPkt); err != nil {
+					return err
+				}
+			}
+		} else {
+			core.GlobalPut(pkt.Data)
+		}
+	}
+
+	for {
+		outPkt, err := encoder.Encode(nil)
+		if err != nil {
+			return fmt.Errorf("falha ao limpar buffer do encoder de vídeo: %w", err)
+		}
+		if outPkt == nil {
+			break
+		}
+		if err := writeVideoPacket(outPkt); err != nil {
+			return err
+		}
+	}
+
+	encoder.Close()
+
+	if len(videoSamples) == 0 {
+		return fmt.Errorf("nenhum frame de vídeo processado com sucesso")
+	}
+
+	if len(sps) == 0 {
+		sps = []byte{0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xf1, 0x83, 0x19, 0x60}
+	}
+	if len(pps) == 0 {
+		pps = []byte{0x68, 0xeb, 0xec, 0xb2, 0x2c}
+	}
+
+	optVideoTrack := core.Track{
+		ID:          1,
+		Type:        core.TrackTypeVideo,
+		Timescale:   videoTimescale,
+		Duration:    uint64(videoPTS),
+		Width:       uint32(targetW),
+		Height:      uint32(targetH),
+		CodecTag:    "avc1",
+		Samples:     videoSamples,
+		Hdlr:        mux.DefaultVideoHdlr(),
+		MediaHeader: mux.DefaultVideoMediaHeader(),
+		Stsd:        mux.MakeH264Stsd(targetW, targetH, sps, pps),
+	}
+
+	var outTracks []core.Track
+	outTracks = append(outTracks, optVideoTrack)
+
+	if audioTrack != nil {
+		optAudioTrack := *audioTrack
+		optAudioTrack.ID = 2
+		outTracks = append(outTracks, optAudioTrack)
+	}
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("falha ao criar arquivo de saída: %w", err)
+	}
+	defer outFile.Close()
+
+	muxer := mux.NewMP4Muxer(outFile)
+	if err := muxer.WriteHeader(outTracks); err != nil {
+		return fmt.Errorf("falha ao escrever cabeçalho no container final: %w", err)
+	}
+
+	sources := make(map[int]io.ReadSeeker)
+	sources[0] = tmpVideoFile
+
+	if audioTrack != nil {
+		audioFile, err := os.Open(inputPath)
+		if err != nil {
+			return fmt.Errorf("falha ao abrir arquivo para cópia da trilha de áudio: %w", err)
+		}
+		defer audioFile.Close()
+		sources[1] = audioFile
+	}
+
+	interleaved := mux.BuildInterleavedOrder(outTracks)
+	bufSize := 65536
+	copyBuf := core.GlobalGet(bufSize)
+	defer core.GlobalPut(copyBuf)
+
+	for _, is := range interleaved {
+		src := sources[is.TrackIndex]
+		origSample := outTracks[is.TrackIndex].Samples[is.SampleIndex]
+
+		_, err = src.Seek(origSample.Offset, io.SeekStart)
+		if err != nil {
+			return fmt.Errorf("falha ao buscar offset %d: %w", origSample.Offset, err)
+		}
+
+		remaining := origSample.Size
+		for remaining > 0 {
+			toRead := int64(bufSize)
+			if remaining < toRead {
+				toRead = remaining
+			}
+
+			_, err = io.ReadFull(src, copyBuf[:toRead])
+			if err != nil {
+				return fmt.Errorf("falha ao ler bloco: %w", err)
+			}
+
+			pkt := &core.Packet{Data: copyBuf[:toRead]}
+			if err := muxer.WritePacket(pkt); err != nil {
+				return fmt.Errorf("falha ao escrever pacote: %w", err)
+			}
+			remaining -= toRead
+		}
+	}
+
+	return muxer.WriteTrailer()
 }

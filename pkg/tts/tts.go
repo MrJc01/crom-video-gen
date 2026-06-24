@@ -3,13 +3,19 @@ package tts
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
+	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
 	"crom-video-gen/internal/execs"
+
+	"cromedia/core"
+	"cromedia/core/demux"
+	"cromedia/core/mux"
 )
 
 // Narrator define a abstração para qualquer serviço de conversão texto-para-fala
@@ -27,7 +33,7 @@ func NewMockNarrator() *MockNarrator {
 	return &MockNarrator{}
 }
 
-// Narrate gera um áudio silenciado no outputPath usando FFmpeg e retorna a duração simulada
+// Narrate gera um áudio de tom senoidal de teste no outputPath usando codificação nativa WAV
 func (mn *MockNarrator) Narrate(texto string, voz string, rate string, pitch string, volume string, outputPath string) (float64, error) {
 	words := len(strings.Fields(texto))
 	// Simulação: 3 palavras por segundo, mínimo de 2 segundos.
@@ -36,28 +42,49 @@ func (mn *MockNarrator) Narrate(texto string, voz string, rate string, pitch str
 		duration = 2.0
 	}
 
-	// Executa ffmpeg para gerar áudio silenciado com a duração correspondente
-	// Usamos codec libmp3lame ou aac de acordo com a extensão
-	codec := "libmp3lame"
-	if strings.HasSuffix(strings.ToLower(outputPath), ".aac") {
-		codec = "aac"
+	// Cria o arquivo de saída
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return 0, fmt.Errorf("falha ao criar arquivo de áudio de teste: %w", err)
+	}
+	defer file.Close()
+
+	sampleRate := 44100
+	track := core.Track{
+		ID:        1,
+		Type:      core.TrackTypeAudio,
+		Timescale: uint32(sampleRate),
 	}
 
-	ffmpegPath := execs.ResolveFFmpegPath()
-	cmd := exec.Command(ffmpegPath, "-y",
-		"-f", "lavfi",
-		"-i", "sine=frequency=440:sample_rate=48000",
-		"-af", "volume=0.15",
-		"-c:a", codec,
-		"-t", fmt.Sprintf("%.3f", duration),
-		outputPath,
-	)
+	wavMuxer := mux.NewWAVMuxer(file)
+	if err := wavMuxer.WriteHeader([]core.Track{track}); err != nil {
+		return 0, fmt.Errorf("falha ao escrever cabeçalho WAV: %w", err)
+	}
 
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// Gera tom senoidal de 440 Hz
+	freq := 440.0
+	volFactor := 0.15
+	totalSamples := int(duration * float64(sampleRate))
+	pcmData := make([]byte, totalSamples*4) // Stereo, 16-bit (4 bytes por sample)
 
-	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("falha ao gerar áudio de teste com ffmpeg (%s): %w (detalhes: %s)", ffmpegPath, err, stderr.String())
+	for i := 0; i < totalSamples; i++ {
+		t := float64(i) / float64(sampleRate)
+		val := math.Sin(2.0*math.Pi*freq*t) * volFactor
+		intVal := int16(val * 32767.0)
+
+		// Canal Esquerdo
+		binary.LittleEndian.PutUint16(pcmData[i*4:i*4+2], uint16(intVal))
+		// Canal Direito
+		binary.LittleEndian.PutUint16(pcmData[i*4+2:i*4+4], uint16(intVal))
+	}
+
+	packet := &core.Packet{Data: pcmData}
+	if err := wavMuxer.WritePacket(packet); err != nil {
+		return 0, fmt.Errorf("falha ao escrever dados de áudio PCM: %w", err)
+	}
+
+	if err := wavMuxer.WriteTrailer(); err != nil {
+		return 0, fmt.Errorf("falha ao finalizar arquivo WAV: %w", err)
 	}
 
 	return duration, nil
@@ -134,31 +161,43 @@ func (en *EdgeTTSNarrator) Narrate(texto string, voz string, rate string, pitch 
 	return duration, nil
 }
 
-// GetAudioDuration invoca o ffprobe e extrai a duração do arquivo de áudio em segundos
+// GetAudioDuration extrai a duração de um arquivo de áudio/vídeo em segundos usando os demuxers do CroMedia
 func GetAudioDuration(filePath string) (float64, error) {
-	ffprobePath := execs.ResolveFFprobePath()
-	cmd := exec.Command(ffprobePath,
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1",
-		filePath,
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	file, err := os.Open(filePath)
 	if err != nil {
-		return 0, fmt.Errorf("falha ao ler duração com ffprobe (%s): %w (detalhes: %s)", ffprobePath, err, stderr.String())
+		return 0, err
+	}
+	defer file.Close()
+
+	format, err := demux.SniffFormat(file)
+	if err != nil {
+		return 0, fmt.Errorf("falha ao identificar formato do arquivo %s: %w", filePath, err)
 	}
 
-
-	durationStr := strings.TrimSpace(stdout.String())
-	duration, err := strconv.ParseFloat(durationStr, 64)
+	dm, err := demux.NewDemuxerFromFormat(format, file)
 	if err != nil {
-		return 0, fmt.Errorf("falha ao interpretar duração '%s': %w", durationStr, err)
+		return 0, fmt.Errorf("falha ao criar demuxer para formato %s: %w", format, err)
+	}
+	defer dm.Close()
+
+	tracks, err := dm.Probe()
+	if err != nil {
+		return 0, fmt.Errorf("falha ao ler metadados do arquivo %s: %w", filePath, err)
 	}
 
-	return duration, nil
+	var maxDuration float64
+	for _, track := range tracks {
+		if track.Timescale > 0 {
+			dur := float64(track.Duration) / float64(track.Timescale)
+			if dur > maxDuration {
+				maxDuration = dur
+			}
+		}
+	}
+
+	if maxDuration == 0 {
+		return 0, fmt.Errorf("duração inválida ou zero encontrada no arquivo %s", filePath)
+	}
+
+	return maxDuration, nil
 }

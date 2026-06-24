@@ -1,24 +1,30 @@
 package render
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"crom-video-gen/internal/execs"
 	"crom-video-gen/pkg/types"
+
+	"cromedia/core"
+	"cromedia/core/demux"
+	"cromedia/core/filters/audio"
+	"cromedia/core/mux"
+	"cromedia/core/pipeline"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
+
 
 // EscapeDrawtext sanitiza o texto para uso no filtro drawtext do FFmpeg
 func EscapeDrawtext(text string) string {
@@ -55,9 +61,8 @@ func WrapText(text string, maxLen int) string {
 	return strings.Join(lines, "\n")
 }
 
-// RenderScene gera um arquivo MP4 intermediário para uma única cena usando headless Chrome e FFmpeg pipe
+// RenderScene gera um arquivo MP4 intermediário para uma única cena usando headless Chrome e CroMedia Pipeline
 func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Context, localAddr string, projectRoot string, cena *types.Cena, global *types.GlobalConfig, audioPath string, duration float64, outputPath string) error {
-	ffmpegPath := execs.ResolveFFmpegPath()
 	w, h, err := global.GetResolutionWidthAndHeight()
 	if err != nil {
 		return fmt.Errorf("resolução inválida: %w", err)
@@ -74,8 +79,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 				relPath = "/" + relPath
 			}
 		} else {
-			// Caso não seja absoluto começando com projectRoot, mas seja absoluto, tenta deixar relativo se possível
-			// Se já for relativo (ex: assets/...), garante que inicie com / para ser resolvido na raiz do servidor
 			if !strings.HasPrefix(relPath, "/") {
 				relPath = "/" + relPath
 			}
@@ -118,7 +121,7 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		return fmt.Errorf("falha ao navegar para o template %s: %w", cena.Template.ID, err)
 	}
 
-	// Injeta o JSON usando a função window.setupTemplate (com decodificação UTF-8 robusta para Base64)
+	// Injeta o JSON usando a função window.setupTemplate
 	setupScript := fmt.Sprintf(`
 		(function() {
 			const b64 = '%s';
@@ -139,9 +142,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 	// Aguarda o carregamento completo de todos os ativos (imagens e vídeos) no DOM
 	waitAssetsScript := `
 		(function() {
-			// Sobrescreve a propriedade 'currentTime' de HTMLMediaElement para tratar vídeos em loop.
-			// Ao buscar (seek) um tempo maior que a duração de um vídeo marcado como loop,
-			// calculamos o modulo (currentTime % duration) para simular o loop de forma fluida.
 			if (!window._currentTimePatched) {
 				window._currentTimePatched = true;
 				try {
@@ -168,7 +168,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 					console.error("Falha ao interceptar currentTime:", e);
 				}
 
-				// Impede que os vídeos iniciem reprodução automática para evitar conflito com seeks manuais
 				try {
 					HTMLMediaElement.prototype.play = function() {
 						return Promise.resolve();
@@ -182,7 +181,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 			const images = Array.from(document.querySelectorAll('img'));
 			const videos = Array.from(document.querySelectorAll('video'));
 			
-			// Pausa todos os vídeos já criados e desabilita autoplay
 			videos.forEach(v => {
 				try {
 					v.pause();
@@ -193,7 +191,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 			let pending = images.length + videos.length;
 			const checkReady = () => {
 				if (pending <= 0) {
-					// Espera dois frames de animação para garantir o primeiro paint e layout
 					requestAnimationFrame(() => {
 						requestAnimationFrame(() => {
 							window.setupFinished = true;
@@ -214,7 +211,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 						pending--;
 						checkReady();
 					}, { once: true });
-					// Força recarregamento caso esteja no cache ou pendente
 					if (img.src) {
 						const src = img.src;
 						img.src = '';
@@ -261,72 +257,57 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 	}
 	logger.Debug("Status de inicialização dos ativos da cena", "cena_id", cena.ID, "carregado", setupFinished)
 
-	// Configura a pipeline do FFmpeg para receber frames via stdin (image2pipe)
-	args := []string{
-		"-y",
-		"-f", "image2pipe",
-		"-vcodec", "mjpeg",
-		"-r", fmt.Sprintf("%d", global.FPS),
-		"-i", "-", // Entrada via stdin
-	}
+
+
+	// Prepara a trilha de narração se fornecida
+	var audioTrack *core.Track
+	var audioFile *os.File
 	if audioPath != "" {
-		args = append(args, "-i", audioPath)
+		audioFile, err = os.Open(audioPath)
+		if err != nil {
+			return fmt.Errorf("falha ao abrir arquivo de narração: %w", err)
+		}
+		defer audioFile.Close()
+
+		format, err := demux.SniffFormat(audioFile)
+		if err != nil {
+			return fmt.Errorf("falha ao identificar formato da narração: %w", err)
+		}
+
+		audioDemuxer, err := demux.NewDemuxerFromFormat(format, audioFile)
+		if err != nil {
+			return fmt.Errorf("falha ao criar demuxer para narração: %w", err)
+		}
+		defer audioDemuxer.Close()
+
+		tracks, err := audioDemuxer.Probe()
+		if err != nil {
+			return fmt.Errorf("falha ao ler metadados da narração: %w", err)
+		}
+
+		if len(tracks) > 0 {
+			audioTrack = &tracks[0]
+		}
 	}
 
-	// Mapeamento de vídeo do stdin
-	args = append(args, "-map", "0:v")
+	// Instancia o codificador H.264
+	videoEncoder := core.NewSimH264Encoder(int(global.FPS), 0)
+	defer videoEncoder.Close()
 
-	if audioPath != "" {
-		// Mapeamento de áudio do arquivo de narração
-		args = append(args,
-			"-map", "1:a",
-			"-c:a", "aac",
-			"-b:a", "192k",
-			"-ar", fmt.Sprintf("%d", global.Audio.SampleRate),
-			"-ac", fmt.Sprintf("%d", global.Audio.Canais),
-		)
-	}
-
-	// Configuração de codificação de vídeo final
-	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18")
-	
-	if w != 1920 || h != 1080 {
-		args = append(args, "-vf", fmt.Sprintf("scale=%d:%d", w, h))
-	}
-	args = append(args,
-		"-pix_fmt", "yuv420p",
-		"-t", fmt.Sprintf("%.3f", duration),
-		outputPath,
-	)
-
-	logger.Debug("Executando FFmpeg para cena", "comando", ffmpegPath+" "+strings.Join(args, " "))
-
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("falha ao obter stdin do FFmpeg: %w", err)
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("falha ao iniciar FFmpeg: %w (stderr: %s)", err, stderr.String())
-	}
-
-	// Channel para processamento concorrente do stdin do FFmpeg
-	// Limitamos o buffer a 8 frames para evitar uso excessivo de RAM (8 * ~500KB = ~4MB por cena)
-	frameChan := make(chan []byte, 8)
+	frameChan := make(chan interface{}, 8)
 	errChan := make(chan error, 1)
 
+	// Inicializa o Pipeline CroMedia de gravação de cena
 	go func() {
-		defer stdin.Close()
-		for img := range frameChan {
-			if _, err := stdin.Write(img); err != nil {
-				errChan <- err
-				return
-			}
-		}
-		errChan <- nil
+		errChan <- pipeline.RenderScenePipeline(
+			outputPath,
+			w, h,
+			int(global.FPS),
+			videoEncoder,
+			frameChan,
+			audioTrack,
+			audioFile,
+		)
 	}()
 
 	totalFrames := int(duration * float64(global.FPS))
@@ -334,44 +315,20 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		totalFrames = 1
 	}
 
-	// Loop frame-a-frame de captura otimizado rodando dentro de um único chromedp.Run
-	var renderErr error
-	var cmdWaited bool
-
-	defer func() {
-		if !cmdWaited && cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		}
-	}()
-
-	// Define um timeout geral para a cena (2 segundos por frame + 30 segundos de margem de segurança)
+	// Loop frame-a-frame de captura
 	sceneTimeout := time.Duration(totalFrames)*2*time.Second + 30*time.Second
 	runCtx, runCancel := context.WithTimeout(sceneCtx, sceneTimeout)
 	defer runCancel()
 
 	err = chromedp.Run(runCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 		for f := 0; f < totalFrames; f++ {
-			// Verifica se a goroutine de escrita encontrou algum erro
-			select {
-			case writeErr := <-errChan:
-				if writeErr != nil {
-					return fmt.Errorf("falha precoce na escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
-				}
-			default:
-			}
-
 			timeSeconds := float64(f) / float64(global.FPS)
 
-			// Script JavaScript otimizado para buscar o frame
 			var seekScript string
 			if hasVideos {
 				seekScript = fmt.Sprintf(`
 					new Promise((resolve) => {
 						const videos = Array.from(document.querySelectorAll('video'));
-						
-						// Filtra apenas vídeos que realmente precisam de seek e estão prontos.
-						// Trata loops de forma correta (calculando o modulo do tempo alvo)
 						const activeVideos = videos.filter(v => {
 							let targetTime = %f;
 							if (v.loop && v.duration && v.duration > 0) {
@@ -396,7 +353,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 							}
 						};
 
-						// Timeout absoluto curto (100ms) para evitar travar o renderizador sob alta carga de CPU
 						const timer = setTimeout(done, 100);
 
 						let pending = 0;
@@ -419,7 +375,6 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 				seekScript = fmt.Sprintf(`window.seekTo(%f, %f);`, timeSeconds, duration)
 			}
 
-			// Executa seek e captura
 			var evalErr error
 			evalErr = chromedp.Evaluate(seekScript, nil).Do(ctx)
 			if evalErr != nil {
@@ -435,13 +390,8 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 				return fmt.Errorf("falha ao capturar screenshot no frame %d: %w", f, evalErr)
 			}
 
-			// Envia os bytes para serem escritos no stdin concorrentemente
 			select {
 			case frameChan <- imageBuf:
-			case writeErr := <-errChan:
-				if writeErr != nil {
-					return fmt.Errorf("falha ao enviar frame %d para gravação no FFmpeg: %w (stderr: %s)", f, writeErr, stderr.String())
-				}
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -449,126 +399,400 @@ func RenderScene(ctx context.Context, logger *slog.Logger, chromeCtx context.Con
 		return nil
 	}))
 
-	if err != nil {
-		renderErr = err
-	}
-
-	// Fecha o canal de frames para sinalizar término da gravação
 	close(frameChan)
 
-	// Aguarda o término da goroutine escritora se não houve erros prévios
-	if renderErr == nil {
-		if writeErr := <-errChan; writeErr != nil {
-			renderErr = fmt.Errorf("falha ao finalizar escrita de frames no pipe do FFmpeg: %w (stderr: %s)", writeErr, stderr.String())
-		}
+	renderErr := <-errChan
+
+	if err != nil {
+		return err
 	}
 
 	if renderErr != nil {
-		return renderErr
-	}
-
-	// Aguarda o término do processo FFmpeg
-	cmdWaited = true
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("FFmpeg falhou ao concluir renderização da cena %d: %w (stderr: %s)", cena.ID, err, stderr.String())
+		return fmt.Errorf("falha ao concluir processamento de frames: %w", renderErr)
 	}
 
 	return nil
 }
 
-// ConcatScenes junta múltiplos vídeos usando o concat demuxer e aplica a trilha sonora final
+// ConcatScenes junta múltiplos vídeos usando o concat demuxer e aplica a trilha sonora final nativamente
 func ConcatScenes(ctx context.Context, logger *slog.Logger, sceneFiles []string, soundtrackPath string, globalTrackVolume float64, audioConf *types.AudioConfig, tempDir string, outputPath string) error {
-	ffmpegPath := execs.ResolveFFmpegPath()
-
-	// 1. Cria o arquivo txt com a lista das cenas para o demuxer concat
-	listFilePath := filepath.Join(tempDir, "concat_list.txt")
-	var fileListContent strings.Builder
-	for _, f := range sceneFiles {
-		// O concat demuxer exige caminhos absolutos ou relativos simples e aspas simples escapadas
-		absPath, err := filepath.Abs(f)
-		if err != nil {
-			return fmt.Errorf("falha ao resolver caminho absoluto de '%s': %w", f, err)
-		}
-		fileListContent.WriteString(fmt.Sprintf("file '%s'\n", strings.ReplaceAll(absPath, "'", "'\\''")))
-	}
-
-	if err := os.WriteFile(listFilePath, []byte(fileListContent.String()), 0644); err != nil {
-		return fmt.Errorf("falha ao criar arquivo de concatenação: %w", err)
-	}
-
-	// Primeiro passo: Concatena as cenas num vídeo provisório sem a trilha sonora
+	// Primeiro passo: Concatena as cenas num vídeo provisório sem a trilha sonora usando stream copy nativo do CroMedia
 	tempConcatOutput := filepath.Join(tempDir, "concatenated_no_music.mp4")
-	concatArgs := []string{
-		"-y",
-		"-f", "concat",
-		"-safe", "0",
-		"-i", listFilePath,
-		"-c", "copy",
-		tempConcatOutput,
+	logger.Debug("Concatenando cenas de forma nativa com CroMedia", "arquivos", sceneFiles)
+	
+	if err := mux.ConcatMP4Files(tempConcatOutput, sceneFiles); err != nil {
+		return fmt.Errorf("falha ao concatenar cenas de forma nativa: %w", err)
 	}
 
-	logger.Debug("Concatenando cenas", "comando", ffmpegPath+" "+strings.Join(concatArgs, " "))
-	cmdConcat := exec.CommandContext(ctx, ffmpegPath, concatArgs...)
-	var stderrConcat bytes.Buffer
-	cmdConcat.Stderr = &stderrConcat
-	if err := cmdConcat.Run(); err != nil {
-		return fmt.Errorf("falha ao concatenar cenas: %w (stderr: %s)", err, stderrConcat.String())
-	}
-
-	// Segundo passo: Muxa a trilha sonora em loop com os áudios de narração do vídeo concatenado
-	var muxArgs []string
-	if soundtrackPath != "" {
-		audioFilter := fmt.Sprintf("[1:a]volume=%.3f[music]; [0:a][music]amix=inputs=2:duration=first:dropout_transition=2", globalTrackVolume)
-		if audioConf.NormalizarVolume {
-			audioFilter += ",loudnorm[audio_final]"
-		} else {
-			audioFilter += "[audio_final]"
-		}
-
-		muxArgs = []string{
-			"-y",
-			"-i", tempConcatOutput,
-			"-stream_loop", "-1", // loop infinito na música de fundo
-			"-i", soundtrackPath,
-			"-filter_complex", audioFilter,
-			"-map", "0:v",
-			"-map", "[audio_final]",
-			"-c:v", "copy", // copia o fluxo de vídeo sem re-encodificar (super rápido)
-			"-c:a", audioConf.Codec,
-			"-ar", fmt.Sprintf("%d", audioConf.SampleRate),
-			"-ac", fmt.Sprintf("%d", audioConf.Canais),
-			"-b:a", audioConf.Bitrate,
-			outputPath,
-		}
-	} else {
-		muxArgs = []string{
-			"-y",
-			"-i", tempConcatOutput,
-			"-map", "0:v",
-			"-map", "0:a",
-			"-c:v", "copy",
-		}
-		if audioConf.NormalizarVolume {
-			muxArgs = append(muxArgs, "-af", "loudnorm")
-			muxArgs = append(muxArgs,
-				"-c:a", audioConf.Codec,
-				"-ar", fmt.Sprintf("%d", audioConf.SampleRate),
-				"-ac", fmt.Sprintf("%d", audioConf.Canais),
-				"-b:a", audioConf.Bitrate,
-			)
-		} else {
-			muxArgs = append(muxArgs, "-c:a", "copy")
-		}
-		muxArgs = append(muxArgs, outputPath)
-	}
-
-	logger.Debug("Adicionando trilha sonora", "comando", ffmpegPath+" "+strings.Join(muxArgs, " "))
-	cmdMux := exec.CommandContext(ctx, ffmpegPath, muxArgs...)
-	var stderrMux bytes.Buffer
-	cmdMux.Stderr = &stderrMux
-	if err := cmdMux.Run(); err != nil {
-		return fmt.Errorf("falha ao mixar trilha sonora: %w (stderr: %s)", err, stderrMux.String())
+	// Segundo passo: Muxa/mixa a trilha de música com os áudios de narração do vídeo concatenado
+	logger.Debug("Mixando trilha sonora e narração nativamente com CroMedia", "trilha", soundtrackPath, "volume", globalTrackVolume)
+	if err := mixAudioTracksNative(tempConcatOutput, soundtrackPath, outputPath, globalTrackVolume, audioConf); err != nil {
+		return fmt.Errorf("falha ao mixar trilha sonora: %w", err)
 	}
 
 	return nil
+}
+
+// mixAudioTracksNative decodifica, mixa e codifica trilhas de áudio nativamente
+func mixAudioTracksNative(videoMP4, soundtrackPath, outputMP4 string, globalTrackVolume float64, audioConf *types.AudioConfig) error {
+	videoFile, err := os.Open(videoMP4)
+	if err != nil {
+		return fmt.Errorf("falha ao abrir arquivo de vídeo: %w", err)
+	}
+	defer videoFile.Close()
+
+	demuxer := demux.NewMP4Demuxer(videoFile)
+	tracks, err := demuxer.Probe()
+	if err != nil {
+		return fmt.Errorf("falha ao ler metadados do vídeo: %w", err)
+	}
+
+	var videoTrack *core.Track
+	var voiceTrack *core.Track
+	voiceTrackIndex := -1
+
+	for i := range tracks {
+		if tracks[i].Type == core.TrackTypeVideo {
+			videoTrack = &tracks[i]
+		} else if tracks[i].Type == core.TrackTypeAudio {
+			voiceTrack = &tracks[i]
+			voiceTrackIndex = i
+		}
+	}
+
+	if videoTrack == nil {
+		return errors.New("nenhuma trilha de vídeo encontrada no MP4")
+	}
+
+	if voiceTrack == nil && soundtrackPath == "" {
+		src, err := os.Open(videoMP4)
+		if err != nil {
+			return fmt.Errorf("falha ao abrir vídeo sem áudio: %w", err)
+		}
+		defer src.Close()
+		dst, err := os.Create(outputMP4)
+		if err != nil {
+			return fmt.Errorf("falha ao criar contêiner de saída sem áudio: %w", err)
+		}
+		defer dst.Close()
+		if _, err = io.Copy(dst, src); err != nil {
+			return fmt.Errorf("falha ao copiar vídeo sem áudio para o destino: %w", err)
+		}
+		return nil
+	}
+
+	var voiceFrame *core.AudioFrame
+	var voiceFrames []*core.AudioFrame
+
+	if voiceTrack != nil {
+		aacDec := &core.SimAACDecoder{}
+		if len(voiceTrack.CodecPrivate) > 0 {
+			_ = aacDec.Init(voiceTrack.CodecPrivate)
+		}
+		defer aacDec.Close()
+
+		for {
+			pkt, err := demuxer.ReadPacket()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("falha ao ler pacote de áudio: %w", err)
+			}
+
+			if pkt.StreamIndex == voiceTrackIndex {
+				f, err := aacDec.Decode(pkt)
+				core.GlobalPut(pkt.Data)
+				if err != nil {
+					return fmt.Errorf("falha ao decodificar pacote AAC: %w", err)
+				}
+				if f != nil {
+					voiceFrames = append(voiceFrames, f)
+				}
+			} else {
+				core.GlobalPut(pkt.Data)
+			}
+		}
+
+		if len(voiceFrames) > 0 {
+			totalSamples := 0
+			for _, f := range voiceFrames {
+				totalSamples += len(f.Data)
+			}
+			voiceData := make([]float32, totalSamples)
+			offset := 0
+			for _, f := range voiceFrames {
+				copy(voiceData[offset:], f.Data)
+				offset += len(f.Data)
+			}
+			voiceFrame = &core.AudioFrame{
+				Channels:   voiceFrames[0].Channels,
+				SampleRate: voiceFrames[0].SampleRate,
+				Data:       voiceData,
+			}
+		}
+	}
+
+	var musicFrame *core.AudioFrame
+	if soundtrackPath != "" {
+		stFile, err := os.Open(soundtrackPath)
+		if err != nil {
+			return fmt.Errorf("falha ao abrir trilha sonora: %w", err)
+		}
+		defer stFile.Close()
+
+		format, err := demux.SniffFormat(stFile)
+		if err != nil {
+			return fmt.Errorf("falha ao farejar formato da trilha: %w", err)
+		}
+
+		if format == "mp3" {
+			musicFrame, err = core.DecodeMP3File(soundtrackPath)
+			if err != nil {
+				return fmt.Errorf("falha ao decodificar MP3 de trilha sonora: %w", err)
+			}
+		} else if format == "wav" {
+			wavDemux := demux.NewWAVDemuxer(stFile)
+			wavTracks, err := wavDemux.Probe()
+			if err != nil {
+				return fmt.Errorf("falha ao ler metadados de WAV: %w", err)
+			}
+			if len(wavTracks) == 0 {
+				return fmt.Errorf("nenhuma trilha de áudio encontrada no WAV")
+			}
+
+			codec := &core.PCMAudioCodec{
+				Channels:   2, // Padrão Estéreo para RIFF/WAV no nosso sistema
+				SampleRate: int(wavTracks[0].Timescale),
+				BitDepth:   16,
+			}
+
+			var wavData []float32
+			for {
+				pkt, err := wavDemux.ReadPacket()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return fmt.Errorf("falha ao ler pacote WAV: %w", err)
+				}
+				f, err := codec.Decode(pkt)
+				core.GlobalPut(pkt.Data)
+				if err != nil {
+					return fmt.Errorf("falha ao decodificar PCM WAV: %w", err)
+				}
+				if f != nil {
+					wavData = append(wavData, f.Data...)
+				}
+			}
+			musicFrame = &core.AudioFrame{
+				Channels:   codec.Channels,
+				SampleRate: codec.SampleRate,
+				Data:       wavData,
+			}
+		} else {
+			return fmt.Errorf("formato de trilha sonora não suportado: %s", format)
+		}
+	}
+
+	// Mixa as trilhas
+	mixedFrame := audio.MixAudioFrames(voiceFrame, musicFrame, 1.0, float32(globalTrackVolume), true)
+	if mixedFrame == nil {
+		return errors.New("a mixagem final do áudio resultou em frame vazio")
+	}
+
+	// Normaliza áudio se configurado
+	if audioConf.NormalizarVolume {
+		normalizer := core.NewPredictiveGainNormalizer(-1.0, 0.05)
+		mixedFrame, err = normalizer.Process(mixedFrame)
+		if err != nil {
+			return fmt.Errorf("falha na normalização final de loudness: %w", err)
+		}
+	}
+
+	targetChannels := mixedFrame.Channels
+	targetSampleRate := mixedFrame.SampleRate
+
+	// Codifica para AAC
+	aacEnc := &core.SimAACEncoder{}
+	defer aacEnc.Close()
+
+	tmpAudioFile, err := os.CreateTemp("", "mix_audio_*.tmp")
+	if err != nil {
+		return fmt.Errorf("falha ao criar cache temporário de áudio: %w", err)
+	}
+	defer func() {
+		tmpAudioFile.Close()
+		os.Remove(tmpAudioFile.Name())
+	}()
+
+	var audioSamples []core.Sample
+	var audioPTS int64 = 0
+	audioFrameDuration := int64(1024)
+
+	writeAudioPacket := func(pkt *core.Packet) error {
+		if pkt == nil {
+			return nil
+		}
+		offset, err := tmpAudioFile.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		_, err = tmpAudioFile.Write(pkt.Data)
+		if err != nil {
+			return err
+		}
+		audioSamples = append(audioSamples, core.Sample{
+			ID:         len(audioSamples) + 1,
+			IsKeyframe: true,
+			Offset:     offset,
+			Size:       int64(len(pkt.Data)),
+			Time:       audioPTS,
+			Duration:   audioFrameDuration,
+		})
+		audioPTS += audioFrameDuration
+		return nil
+	}
+
+	chunkSize := 1024 * targetChannels
+	for i := 0; i < len(mixedFrame.Data); i += chunkSize {
+		end := i + chunkSize
+		if end > len(mixedFrame.Data) {
+			end = len(mixedFrame.Data)
+		}
+		chunkData := mixedFrame.Data[i:end]
+
+		chunkFrame := &core.AudioFrame{
+			Channels:   targetChannels,
+			SampleRate: targetSampleRate,
+			Data:       chunkData,
+		}
+
+		pkt, err := aacEnc.Encode(chunkFrame)
+		if err != nil {
+			return fmt.Errorf("falha ao codificar fragmento de áudio: %w", err)
+		}
+		if pkt != nil {
+			if err := writeAudioPacket(pkt); err != nil {
+				return err
+			}
+		}
+	}
+
+	for {
+		pkt, err := aacEnc.Encode(nil)
+		if err != nil {
+			return fmt.Errorf("falha ao limpar buffer do encoder de áudio: %w", err)
+		}
+		if pkt == nil {
+			break
+		}
+		if err := writeAudioPacket(pkt); err != nil {
+			return err
+		}
+	}
+
+	if len(audioSamples) == 0 {
+		return errors.New("nenhum frame de áudio foi codificado com sucesso")
+	}
+
+	makeAudioSpecificConfig := func(sampleRate int, channels int) []byte {
+		srIndex := 4 // Default 44100
+		switch sampleRate {
+		case 96000: srIndex = 0
+		case 88200: srIndex = 1
+		case 64000: srIndex = 2
+		case 48000: srIndex = 3
+		case 44100: srIndex = 4
+		case 32000: srIndex = 5
+		case 24000: srIndex = 6
+		case 22050: srIndex = 7
+		case 16000: srIndex = 8
+		case 12000: srIndex = 9
+		case 11025: srIndex = 10
+		case 8000:  srIndex = 11
+		case 7350:  srIndex = 12
+		}
+
+		b0 := byte(2<<3) | byte(srIndex>>1)
+		b1 := byte((srIndex&1)<<7) | byte((channels&15)<<3)
+		return []byte{b0, b1}
+	}
+
+	optAudioTrack := core.Track{
+		ID:          2,
+		Type:        core.TrackTypeAudio,
+		Timescale:   uint32(targetSampleRate),
+		Duration:    uint64(audioPTS),
+		CodecTag:    "mp4a",
+		Samples:     audioSamples,
+		Hdlr:        mux.DefaultAudioHdlr(),
+		MediaHeader: mux.DefaultAudioMediaHeader(),
+		Stsd:        mux.MakeAACStsd(targetSampleRate, targetChannels, makeAudioSpecificConfig(targetSampleRate, targetChannels)),
+	}
+
+	// Copia trilha de vídeo sem re-encoding
+	optVideoTrack := *videoTrack
+	optVideoTrack.ID = 1
+
+	var outTracks []core.Track
+	outTracks = append(outTracks, optVideoTrack)
+	outTracks = append(outTracks, optAudioTrack)
+
+	outFile, err := os.Create(outputMP4)
+	if err != nil {
+		return fmt.Errorf("falha ao criar contêiner MP4 final: %w", err)
+	}
+	defer outFile.Close()
+
+	muxer := mux.NewMP4Muxer(outFile)
+	if err := muxer.WriteHeader(outTracks); err != nil {
+		return fmt.Errorf("falha ao escrever cabeçalhos no MP4 final: %w", err)
+	}
+
+	sources := make(map[int]io.ReadSeeker)
+
+	videoSourceFile, err := os.Open(videoMP4)
+	if err != nil {
+		return fmt.Errorf("falha ao abrir vídeo temporário para remuxer: %w", err)
+	}
+	defer videoSourceFile.Close()
+	sources[0] = videoSourceFile
+	sources[1] = tmpAudioFile
+
+	interleaved := mux.BuildInterleavedOrder(outTracks)
+	bufSize := 65536
+	copyBuf := core.GlobalGet(bufSize)
+	defer core.GlobalPut(copyBuf)
+
+	for _, is := range interleaved {
+		src := sources[is.TrackIndex]
+		origSample := outTracks[is.TrackIndex].Samples[is.SampleIndex]
+
+		_, err = src.Seek(origSample.Offset, io.SeekStart)
+		if err != nil {
+			return fmt.Errorf("falha ao ler offset %d: %w", origSample.Offset, err)
+		}
+
+		remaining := origSample.Size
+		for remaining > 0 {
+			toRead := int64(bufSize)
+			if remaining < toRead {
+				toRead = remaining
+			}
+
+			_, err = io.ReadFull(src, copyBuf[:toRead])
+			if err != nil {
+				return fmt.Errorf("falha ao copiar frame do buffer: %w", err)
+			}
+
+			pkt := &core.Packet{Data: copyBuf[:toRead]}
+			if err := muxer.WritePacket(pkt); err != nil {
+				return fmt.Errorf("falha ao muxar pacote final: %w", err)
+			}
+			remaining -= toRead
+		}
+	}
+
+	return muxer.WriteTrailer()
 }

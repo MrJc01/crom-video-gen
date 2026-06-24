@@ -2,11 +2,13 @@ package render
 
 import (
 	"context"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,31 +16,58 @@ import (
 	"crom-video-gen/internal/execs"
 	"crom-video-gen/pkg/types"
 
+	"cromedia/core"
+	"cromedia/core/mux"
+
 	"github.com/chromedp/chromedp"
 )
 
-func generateTestImage(t *testing.T, ffmpegPath, outputPath string) {
-	cmd := exec.Command(ffmpegPath, "-y",
-		"-f", "lavfi",
-		"-i", "color=c=blue:s=640x480:d=1",
-		"-vframes", "1",
-		outputPath,
-	)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Erro ao gerar imagem de teste com ffmpeg: %v", err)
+func generateTestImage(t *testing.T, outputPath string) {
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	for y := 0; y < 480; y++ {
+		for x := 0; x < 640; x++ {
+			img.Set(x, y, color.RGBA{0, 0, 255, 255})
+		}
+	}
+	f, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := jpeg.Encode(f, img, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func generateTestAudio(t *testing.T, ffmpegPath, outputPath string) {
-	cmd := exec.Command(ffmpegPath, "-y",
-		"-f", "lavfi",
-		"-i", "anullsrc=r=48000:cl=stereo",
-		"-c:a", "aac",
-		"-t", "3",
-		outputPath,
-	)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Erro ao gerar áudio de teste com ffmpeg: %v", err)
+func generateTestAudio(t *testing.T, outputPath string) {
+	f, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	sampleRate := 48000
+	track := core.Track{
+		ID:        1,
+		Type:      core.TrackTypeAudio,
+		Timescale: uint32(sampleRate),
+	}
+
+	wavMuxer := mux.NewWAVMuxer(f)
+	if err := wavMuxer.WriteHeader([]core.Track{track}); err != nil {
+		t.Fatal(err)
+	}
+
+	duration := 3.0
+	totalSamples := int(duration * float64(sampleRate))
+	pcmData := make([]byte, totalSamples*4) // Stereo, 16-bit (4 bytes por sample)
+
+	if err := wavMuxer.WritePacket(&core.Packet{Data: pcmData}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := wavMuxer.WriteTrailer(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -49,15 +78,13 @@ func TestRenderScene_IntroBranding(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	ffmpegPath := execs.ResolveFFmpegPath()
-
 	// Gera ativos fictícios para o teste
 	testImg := filepath.Join(tempDir, "imagem.jpg")
 	testAudio := filepath.Join(tempDir, "narracao.aac")
 	outputScene := filepath.Join(tempDir, "cena_1.mp4")
 
-	generateTestImage(t, ffmpegPath, testImg)
-	generateTestAudio(t, ffmpegPath, testAudio)
+	generateTestImage(t, testImg)
+	generateTestAudio(t, testAudio)
 
 	globalConf := &types.GlobalConfig{
 		Resolucao:    "640x480", // Resolução reduzida para o teste rodar super rápido
